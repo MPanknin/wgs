@@ -18,12 +18,13 @@ if (!canvas) {
   throw new Error('Canvas element not found');
 }
 
-function setupCanvas(canvas: HTMLCanvasElement, camera: Camera): void {
+function setupCanvas(canvas: HTMLCanvasElement, camera: Camera, renderer: Renderer): void {
   function resize() {
     canvas.width = window.innerWidth;
     canvas.height = window.innerHeight;
     camera.aspect = canvas.width / canvas.height;
     camera.updateMatrices();
+    renderer.resize(canvas.width, canvas.height);
   }
 
   resize();
@@ -47,7 +48,7 @@ async function main() {
   const scene = new Scene();
   const camera = new Camera(canvas.width / canvas.height);
 
-  setupCanvas(canvas, camera);
+  setupCanvas(canvas, camera, renderer);
   new CameraControl(camera, canvas);
 
   // Create test triangle

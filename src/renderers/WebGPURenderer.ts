@@ -227,6 +227,10 @@ export class WebGPURenderer implements Renderer {
     // We could store these values and use them in the next render call
   }
 
+  resize(_width: number, _height: number): void {
+    // WebGPU canvas context handles resizing automatically
+  }
+
   destroy(): void {
     this.device.destroy();
   }

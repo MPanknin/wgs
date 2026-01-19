@@ -167,6 +167,10 @@ export class WebGLRenderer implements Renderer {
     this.gl.clear(this.gl.COLOR_BUFFER_BIT);
   }
 
+  resize(width: number, height: number): void {
+    this.gl.viewport(0, 0, width, height);
+  }
+
   destroy(): void {
     // TODO: implement cleanup
   }
