@@ -1,3 +1,5 @@
+import { testSplat } from './data';
+
 console.log('WGS - Initializing...');
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -16,4 +18,5 @@ resizeCanvas();
 window.addEventListener('resize', resizeCanvas);
 
 console.log('Canvas initialized:', canvas.width, 'x', canvas.height);
+console.log('Test splat:', testSplat);
 
