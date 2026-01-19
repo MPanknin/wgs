@@ -156,7 +156,7 @@ export class WebGPURenderer implements Renderer {
         topology: 'triangle-list',
       },
       depthStencil: {
-        depthWriteEnabled: true,
+        depthWriteEnabled: false,
         depthCompare: 'less',
         format: 'depth24plus',
       },
