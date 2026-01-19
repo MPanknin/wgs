@@ -3,7 +3,7 @@ import type { Scene } from '../core/Scene';
 import type { Camera } from '../core/Camera';
 import type { Buffer, BufferDescriptor } from '../core/Buffer';
 import type { Shader, ShaderDescriptor } from '../core/Shader';
-import type { Mesh, MeshDescriptor } from '../core/Mesh';
+import { Mesh, type MeshDescriptor } from '../core/Mesh';
 
 class GLBuffer implements Buffer {
   constructor(public glBuffer: WebGLBuffer) {}
@@ -17,6 +17,7 @@ class GLShader implements Shader {
   constructor(
     public program: WebGLProgram,
     public positionLocation: number,
+    public modelMatrixLocation: WebGLUniformLocation | null,
     public viewMatrixLocation: WebGLUniformLocation | null,
     public projectionMatrixLocation: WebGLUniformLocation | null,
     public colorLocation: WebGLUniformLocation | null
@@ -27,15 +28,15 @@ class GLShader implements Shader {
   }
 }
 
-class GLMesh implements Mesh {
-  material?: import('../core/Material').Material;
-
+class GLMesh extends Mesh {
   constructor(
     public vertexBuffer: GLBuffer,
     public indexBuffer: GLBuffer | undefined,
     public vertexCount: number,
     public indexCount: number | undefined
-  ) {}
+  ) {
+    super();
+  }
 
   destroy(): void {
     // TODO: implement cleanup
@@ -53,6 +54,9 @@ export class WebGLRenderer implements Renderer {
     this.gl = gl;
 
     gl.viewport(0, 0, canvas.width, canvas.height);
+
+    gl.enable(gl.DEPTH_TEST);
+    gl.depthFunc(gl.LEQUAL);
   }
 
   createBuffer(descriptor: BufferDescriptor): Buffer {
@@ -101,11 +105,12 @@ export class WebGLRenderer implements Renderer {
     }
 
     const positionLocation = gl.getAttribLocation(program, 'position');
+    const modelMatrixLocation = gl.getUniformLocation(program, 'modelMatrix');
     const viewMatrixLocation = gl.getUniformLocation(program, 'viewMatrix');
     const projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
     const colorLocation = gl.getUniformLocation(program, 'color');
 
-    return new GLShader(program, positionLocation, viewMatrixLocation, projectionMatrixLocation, colorLocation);
+    return new GLShader(program, positionLocation, modelMatrixLocation, viewMatrixLocation, projectionMatrixLocation, colorLocation);
   }
 
   createMesh(descriptor: MeshDescriptor): Mesh {
@@ -133,7 +138,9 @@ export class WebGLRenderer implements Renderer {
   render(scene: Scene, camera: Camera): void {
     const { gl } = this;
 
-    for (const mesh of scene.meshes) {
+    scene.updateMatrixWorld();
+
+    for (const mesh of scene.getMeshes()) {
       if (!mesh.material?.shader) {
         continue;
       }
@@ -142,6 +149,11 @@ export class WebGLRenderer implements Renderer {
       const shader = mesh.material.shader as GLShader;
 
       gl.useProgram(shader.program);
+
+      // model matrix
+      if (shader.modelMatrixLocation) {
+        gl.uniformMatrix4fv(shader.modelMatrixLocation, false, mesh.worldMatrix);
+      }
 
       // camera uniforms
       if (shader.viewMatrixLocation) {
@@ -172,7 +184,7 @@ export class WebGLRenderer implements Renderer {
 
   clear(r: number, g: number, b: number, a: number): void {
     this.gl.clearColor(r, g, b, a);
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT);
+    this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
   }
 
   resize(width: number, height: number): void {

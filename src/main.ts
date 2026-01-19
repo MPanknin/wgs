@@ -41,9 +41,6 @@ async function createRenderer(canvas: HTMLCanvasElement): Promise<Renderer> {
 }
 
 async function main() {
-  console.log('WGS - Initializing...');
-  console.log('Backend:', config.backend);
-
   const renderer = await createRenderer(canvas);
   const scene = new Scene();
   const camera = new Camera(canvas.width / canvas.height);
@@ -51,20 +48,36 @@ async function main() {
   setupCanvas(canvas, camera, renderer);
   new CameraControl(camera, canvas);
 
-  // Create test triangle
-  const shader = renderer.createShader({
+  const shader1 = renderer.createShader({
     vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
     fragment: config.backend === 'webgpu' ? fragmentShaderWebGPU : fragmentShaderWebGL,
   });
 
-  const mesh = renderer.createMesh({ vertices: testTriangle });
-  mesh.material = {
-    shader,
-    color: [0.2, 0.6, 1.0], 
-  };
-  scene.add(mesh);
+  const shader2 = renderer.createShader({
+    vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
+    fragment: config.backend === 'webgpu' ? fragmentShaderWebGPU : fragmentShaderWebGL,
+  });
 
-  // Render loop
+  const mesh1 = renderer.createMesh({ vertices: testTriangle });
+  mesh1.material = {
+    shader: shader1,
+    color: [0.2, 0.6, 1.0],
+  };
+  mesh1.position = [-0.6, 0, 0];
+  mesh1.markMatrixDirty();
+
+  const mesh2 = renderer.createMesh({ vertices: testTriangle });
+  mesh2.material = {
+    shader: shader2,
+    color: [0.2, 0.6, 0.5],
+  };
+  mesh2.position = [1.2, 0, 0];
+  mesh2.scale = [0.7, 0.7, 0.7];
+  mesh2.markMatrixDirty();
+
+  mesh1.addChild(mesh2);
+  scene.add(mesh1);
+
   function animate() {
     renderer.clear(0, 0, 0, 1);
     renderer.render(scene, camera);
@@ -72,7 +85,6 @@ async function main() {
   }
 
   animate();
-  console.log('Rendering started');
 }
 
 main().catch(console.error);

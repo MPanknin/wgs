@@ -3,7 +3,7 @@ import type { Scene } from '../core/Scene';
 import type { Camera } from '../core/Camera';
 import type { Buffer, BufferDescriptor } from '../core/Buffer';
 import type { Shader, ShaderDescriptor } from '../core/Shader';
-import type { Mesh, MeshDescriptor } from '../core/Mesh';
+import { Mesh, type MeshDescriptor } from '../core/Mesh';
 
 class GPUBufferWrapper implements Buffer {
   constructor(public gpuBuffer: GPUBuffer) {}
@@ -25,15 +25,15 @@ class GPUShaderWrapper implements Shader {
   }
 }
 
-class GPUMeshWrapper implements Mesh {
-  material?: import('../core/Material').Material;
-
+class GPUMeshWrapper extends Mesh {
   constructor(
     public vertexBuffer: GPUBufferWrapper,
     public indexBuffer: GPUBufferWrapper | undefined,
     public vertexCount: number,
     public indexCount: number | undefined
-  ) {}
+  ) {
+    super();
+  }
 
   destroy(): void {
     this.vertexBuffer.destroy();
@@ -45,6 +45,7 @@ export class WebGPURenderer implements Renderer {
   private device!: GPUDevice;
   private context!: GPUCanvasContext;
   private format!: GPUTextureFormat;
+  private depthTexture!: GPUTexture;
 
   constructor(private canvas: HTMLCanvasElement) {}
 
@@ -71,6 +72,16 @@ export class WebGPURenderer implements Renderer {
     this.context.configure({
       device: this.device,
       format: this.format,
+    });
+
+    // create depth texture
+    this.depthTexture = this.device.createTexture({
+      size: {
+        width: this.canvas.width,
+        height: this.canvas.height,
+      },
+      format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
     });
   }
 
@@ -132,10 +143,15 @@ export class WebGPURenderer implements Renderer {
       primitive: {
         topology: 'triangle-list',
       },
+      depthStencil: {
+        depthWriteEnabled: true,
+        depthCompare: 'less',
+        format: 'depth24plus',
+      },
     });
 
     const uniformBuffer = this.device.createBuffer({
-      size: 144, // 2 mat4x4 matrices + vec3 color (with padding)
+      size: 208, // 3 mat4x4 matrices + vec3 color (with padding)
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -179,6 +195,8 @@ export class WebGPURenderer implements Renderer {
   }
 
   render(scene: Scene, camera: Camera): void {
+    scene.updateMatrixWorld();
+
     const commandEncoder = this.device.createCommandEncoder();
     const textureView = this.context.getCurrentTexture().createView();
 
@@ -191,9 +209,15 @@ export class WebGPURenderer implements Renderer {
           storeOp: 'store',
         },
       ],
+      depthStencilAttachment: {
+        view: this.depthTexture.createView(),
+        depthClearValue: 1.0,
+        depthLoadOp: 'clear',
+        depthStoreOp: 'store',
+      },
     });
 
-    for (const mesh of scene.meshes) {
+    for (const mesh of scene.getMeshes()) {
       if (!mesh.material?.shader) {
         continue;
       }
@@ -201,15 +225,16 @@ export class WebGPURenderer implements Renderer {
       const gpuMesh = mesh as GPUMeshWrapper;
       const shader = mesh.material.shader as GPUShaderWrapper;
 
-      const uniformData = new Float32Array(36); // 2 x mat4 + vec3 (with padding) = 36 floats
-      uniformData.set(camera.viewMatrix, 0);
-      uniformData.set(camera.projectionMatrix, 16);
+      const uniformData = new Float32Array(52); // 3 x mat4 + vec3 (with padding) = 52 floats
+      uniformData.set(mesh.worldMatrix, 0);
+      uniformData.set(camera.viewMatrix, 16);
+      uniformData.set(camera.projectionMatrix, 32);
 
-      // Set color (offset 32, padded to vec4 alignment)
+      // Set color (offset 48, padded to vec4 alignment)
       const color = mesh.material.color || [1, 0, 0];
-      uniformData[32] = color[0];
-      uniformData[33] = color[1];
-      uniformData[34] = color[2];
+      uniformData[48] = color[0];
+      uniformData[49] = color[1];
+      uniformData[50] = color[2];
 
       this.device.queue.writeBuffer(shader.uniformBuffer, 0, uniformData);
 
@@ -234,8 +259,14 @@ export class WebGPURenderer implements Renderer {
     // We could store these values and use them in the next render call
   }
 
-  resize(_width: number, _height: number): void {
-    // WebGPU canvas context handles resizing automatically
+  resize(width: number, height: number): void {
+    // Recreate depth texture with new size
+    this.depthTexture.destroy();
+    this.depthTexture = this.device.createTexture({
+      size: { width, height },
+      format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
   }
 
   destroy(): void {
