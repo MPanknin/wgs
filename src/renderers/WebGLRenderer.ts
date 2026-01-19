@@ -20,7 +20,8 @@ class GLShader implements Shader {
     public modelMatrixLocation: WebGLUniformLocation | null,
     public viewMatrixLocation: WebGLUniformLocation | null,
     public projectionMatrixLocation: WebGLUniformLocation | null,
-    public colorLocation: WebGLUniformLocation | null
+    public colorLocation: WebGLUniformLocation | null,
+    public opacityLocation: WebGLUniformLocation | null
   ) {}
 
   destroy(): void {
@@ -57,6 +58,9 @@ export class WebGLRenderer implements Renderer {
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
+
+    gl.enable(gl.BLEND);
+    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   createBuffer(descriptor: BufferDescriptor): Buffer {
@@ -109,8 +113,9 @@ export class WebGLRenderer implements Renderer {
     const viewMatrixLocation = gl.getUniformLocation(program, 'viewMatrix');
     const projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
     const colorLocation = gl.getUniformLocation(program, 'color');
+    const opacityLocation = gl.getUniformLocation(program, 'opacity');
 
-    return new GLShader(program, positionLocation, modelMatrixLocation, viewMatrixLocation, projectionMatrixLocation, colorLocation);
+    return new GLShader(program, positionLocation, modelMatrixLocation, viewMatrixLocation, projectionMatrixLocation, colorLocation, opacityLocation);
   }
 
   createMesh(descriptor: MeshDescriptor): Mesh {
@@ -167,6 +172,10 @@ export class WebGLRenderer implements Renderer {
       if (shader.colorLocation) {
         const color = mesh.material.color || [1, 0, 0];
         gl.uniform3f(shader.colorLocation, color[0], color[1], color[2]);
+      }
+      if (shader.opacityLocation) {
+        const opacity = mesh.material.opacity ?? 1.0;
+        gl.uniform1f(shader.opacityLocation, opacity);
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, glMesh.vertexBuffer.glBuffer);

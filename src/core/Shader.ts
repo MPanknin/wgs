@@ -20,8 +20,9 @@ export const vertexShaderWebGL = `
 export const fragmentShaderWebGL = `
   precision mediump float;
   uniform vec3 color;
+  uniform float opacity;
   void main() {
-    gl_FragColor = vec4(color, 1.0);
+    gl_FragColor = vec4(color, opacity);
   }
 `;
 
@@ -31,6 +32,7 @@ export const vertexShaderWebGPU = `
     viewMatrix: mat4x4f,
     projectionMatrix: mat4x4f,
     color: vec3f,
+    opacity: f32,
   }
 
   @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -44,7 +46,7 @@ export const vertexShaderWebGPU = `
 export const fragmentShaderWebGPU = `
   @fragment
   fn fragmentMain() -> @location(0) vec4f {
-    return vec4f(uniforms.color, 1.0);
+    return vec4f(uniforms.color, uniforms.opacity);
   }
 `;
 

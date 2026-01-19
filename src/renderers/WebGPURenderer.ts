@@ -137,6 +137,18 @@ export class WebGPURenderer implements Renderer {
         targets: [
           {
             format: this.format,
+            blend: {
+              color: {
+                srcFactor: 'src-alpha',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+              alpha: {
+                srcFactor: 'one',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+            },
           },
         ],
       },
@@ -151,7 +163,7 @@ export class WebGPURenderer implements Renderer {
     });
 
     const uniformBuffer = this.device.createBuffer({
-      size: 208, // 3 mat4x4 matrices + vec3 color (with padding)
+      size: 208, // 3 mat4x4 matrices (192) + vec3 color (12) + f32 opacity (4)
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -225,16 +237,20 @@ export class WebGPURenderer implements Renderer {
       const gpuMesh = mesh as GPUMeshWrapper;
       const shader = mesh.material.shader as GPUShaderWrapper;
 
-      const uniformData = new Float32Array(52); // 3 x mat4 + vec3 (with padding) = 52 floats
+      const uniformData = new Float32Array(52); // 3 x mat4 + vec3 + f32 = 52 floats
       uniformData.set(mesh.worldMatrix, 0);
       uniformData.set(camera.viewMatrix, 16);
       uniformData.set(camera.projectionMatrix, 32);
 
-      // Set color (offset 48, padded to vec4 alignment)
+      // set color (offset 48)
       const color = mesh.material.color || [1, 0, 0];
       uniformData[48] = color[0];
       uniformData[49] = color[1];
       uniformData[50] = color[2];
+
+      // set opacity (offset 51, right after vec3)
+      const opacity = mesh.material.opacity ?? 1.0;
+      uniformData[51] = opacity;
 
       this.device.queue.writeBuffer(shader.uniformBuffer, 0, uniformData);
 

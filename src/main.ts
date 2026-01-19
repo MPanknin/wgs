@@ -62,6 +62,7 @@ async function main() {
   mesh1.material = {
     shader: shader1,
     color: [0.2, 0.6, 1.0],
+    opacity: 0.5,
   };
   mesh1.position = [-0.6, 0, 0];
   mesh1.markMatrixDirty();
@@ -70,8 +71,9 @@ async function main() {
   mesh2.material = {
     shader: shader2,
     color: [0.2, 0.6, 0.5],
+    opacity: 0.5,
   };
-  mesh2.position = [1.2, 0, 0];
+  mesh2.position = [0.2, 0, 0];
   mesh2.scale = [0.7, 0.7, 0.7];
   mesh2.markMatrixDirty();
 
