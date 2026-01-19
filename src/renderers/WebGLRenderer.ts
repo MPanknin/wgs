@@ -18,7 +18,8 @@ class GLShader implements Shader {
     public program: WebGLProgram,
     public positionLocation: number,
     public viewMatrixLocation: WebGLUniformLocation | null,
-    public projectionMatrixLocation: WebGLUniformLocation | null
+    public projectionMatrixLocation: WebGLUniformLocation | null,
+    public colorLocation: WebGLUniformLocation | null
   ) {}
 
   destroy(): void {
@@ -102,8 +103,9 @@ export class WebGLRenderer implements Renderer {
     const positionLocation = gl.getAttribLocation(program, 'position');
     const viewMatrixLocation = gl.getUniformLocation(program, 'viewMatrix');
     const projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
+    const colorLocation = gl.getUniformLocation(program, 'color');
 
-    return new GLShader(program, positionLocation, viewMatrixLocation, projectionMatrixLocation);
+    return new GLShader(program, positionLocation, viewMatrixLocation, projectionMatrixLocation, colorLocation);
   }
 
   createMesh(descriptor: MeshDescriptor): Mesh {
@@ -147,6 +149,12 @@ export class WebGLRenderer implements Renderer {
       }
       if (shader.projectionMatrixLocation) {
         gl.uniformMatrix4fv(shader.projectionMatrixLocation, false, camera.projectionMatrix);
+      }
+
+      // material properties
+      if (shader.colorLocation) {
+        const color = mesh.material.color || [1, 0, 0];
+        gl.uniform3f(shader.colorLocation, color[0], color[1], color[2]);
       }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, glMesh.vertexBuffer.glBuffer);

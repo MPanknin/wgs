@@ -58,7 +58,10 @@ async function main() {
   });
 
   const mesh = renderer.createMesh({ vertices: testTriangle });
-  mesh.material = { shader };
+  mesh.material = {
+    shader,
+    color: [0.2, 0.6, 1.0], 
+  };
   scene.add(mesh);
 
   // Render loop

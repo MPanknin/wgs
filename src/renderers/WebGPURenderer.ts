@@ -135,7 +135,7 @@ export class WebGPURenderer implements Renderer {
     });
 
     const uniformBuffer = this.device.createBuffer({
-      size: 128, // 2 mat4x4 matrices
+      size: 144, // 2 mat4x4 matrices + vec3 color (with padding)
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -201,9 +201,16 @@ export class WebGPURenderer implements Renderer {
       const gpuMesh = mesh as GPUMeshWrapper;
       const shader = mesh.material.shader as GPUShaderWrapper;
 
-      const uniformData = new Float32Array(32); // 2 x mat4 = 32 floats
+      const uniformData = new Float32Array(36); // 2 x mat4 + vec3 (with padding) = 36 floats
       uniformData.set(camera.viewMatrix, 0);
       uniformData.set(camera.projectionMatrix, 16);
+
+      // Set color (offset 32, padded to vec4 alignment)
+      const color = mesh.material.color || [1, 0, 0];
+      uniformData[32] = color[0];
+      uniformData[33] = color[1];
+      uniformData[34] = color[2];
+
       this.device.queue.writeBuffer(shader.uniformBuffer, 0, uniformData);
 
       renderPass.setPipeline(shader.pipeline);
