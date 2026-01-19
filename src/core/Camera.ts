@@ -1,7 +1,9 @@
+import { subtract, cross, dot, normalize, type Vec3 } from '../utils/Math';
+
 export class Camera {
-  position: [number, number, number] = [0, 0, 5];
-  target: [number, number, number] = [0, 0, 0];
-  up: [number, number, number] = [0, 1, 0];
+  position: Vec3 = [0, 0, 5];
+  target: Vec3 = [0, 0, 0];
+  up: Vec3 = [0, 1, 0];
 
   fov: number = 60;
   aspect: number = 1;
@@ -78,25 +80,4 @@ export class Camera {
     this.projectionMatrix[14] = this.near * this.far * rangeInv * 2;
     this.projectionMatrix[15] = 0;
   }
-}
-
-function subtract(a: [number, number, number], b: [number, number, number]): [number, number, number] {
-  return [a[0] - b[0], a[1] - b[1], a[2] - b[2]];
-}
-
-function cross(a: [number, number, number], b: [number, number, number]): [number, number, number] {
-  return [
-    a[1] * b[2] - a[2] * b[1],
-    a[2] * b[0] - a[0] * b[2],
-    a[0] * b[1] - a[1] * b[0],
-  ];
-}
-
-function dot(a: [number, number, number], b: [number, number, number]): number {
-  return a[0] * b[0] + a[1] * b[1] + a[2] * b[2];
-}
-
-function normalize(v: [number, number, number]): [number, number, number] {
-  const len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
-  return len > 0 ? [v[0] / len, v[1] / len, v[2] / len] : [0, 0, 0];
 }

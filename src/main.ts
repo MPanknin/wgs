@@ -1,72 +1,66 @@
-import { config } from './config';
+import { config } from './Config';
 import { WebGLRenderer } from './renderers/WebGLRenderer';
 import { WebGPURenderer } from './renderers/WebGPURenderer';
 import { Scene } from './core/Scene';
 import { Camera } from './core/Camera';
 import { CameraControl } from './core/CameraControl';
 import type { Renderer } from './core/Renderer';
-import { vertexShaderWebGPU, vertexShaderWebGL, fragmentShaderWebGPU, fragmentShaderWebGL } from './core/Shader';
-
-console.log('WGS - Initializing...');
+import {
+  vertexShaderWebGPU,
+  vertexShaderWebGL,
+  fragmentShaderWebGPU,
+  fragmentShaderWebGL,
+} from './core/Shader';
+import { testTriangle } from './Data';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
-
 if (!canvas) {
   throw new Error('Canvas element not found');
 }
 
-// Resize canvas to match display size
-let camera: Camera;
-function resizeCanvas() {
-  canvas.width = window.innerWidth;
-  canvas.height = window.innerHeight;
-  if (camera) {
+function setupCanvas(canvas: HTMLCanvasElement, camera: Camera): void {
+  function resize() {
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
     camera.aspect = canvas.width / canvas.height;
     camera.updateMatrices();
   }
+
+  resize();
+  window.addEventListener('resize', resize);
 }
 
-resizeCanvas();
-window.addEventListener('resize', resizeCanvas);
-
-console.log('Canvas initialized:', canvas.width, 'x', canvas.height);
-console.log('Using backend:', config.backend);
-
-const triangleVertices = new Float32Array([
-  0.0, 0.5, 0.0,
-  -0.5, -0.5, 0.0,
-  0.5, -0.5, 0.0,
-]);
+async function createRenderer(canvas: HTMLCanvasElement): Promise<Renderer> {
+  if (config.backend === 'webgpu') {
+    const renderer = new WebGPURenderer(canvas);
+    await renderer.init();
+    return renderer;
+  }
+  return new WebGLRenderer(canvas);
+}
 
 async function main() {
-  let renderer: Renderer;
+  console.log('WGS - Initializing...');
+  console.log('Backend:', config.backend);
 
-  if (config.backend === 'webgpu') {
-    const webgpuRenderer = new WebGPURenderer(canvas);
-    await webgpuRenderer.init();
-    renderer = webgpuRenderer;
-  } else {
-    renderer = new WebGLRenderer(canvas);
-  }
-
+  const renderer = await createRenderer(canvas);
   const scene = new Scene();
-  camera = new Camera(canvas.width / canvas.height);
+  const camera = new Camera(canvas.width / canvas.height);
 
+  setupCanvas(canvas, camera);
   new CameraControl(camera, canvas);
 
+  // Create test triangle
   const shader = renderer.createShader({
     vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
     fragment: config.backend === 'webgpu' ? fragmentShaderWebGPU : fragmentShaderWebGL,
   });
 
-  const mesh = renderer.createMesh({
-    vertices: triangleVertices,
-  });
-
+  const mesh = renderer.createMesh({ vertices: testTriangle });
   mesh.material = { shader };
-
   scene.add(mesh);
 
+  // Render loop
   function animate() {
     renderer.clear(0, 0, 0, 1);
     renderer.render(scene, camera);
@@ -74,6 +68,7 @@ async function main() {
   }
 
   animate();
+  console.log('Rendering started');
 }
 
 main().catch(console.error);
