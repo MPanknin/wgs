@@ -16,11 +16,12 @@ class GPUBufferWrapper implements Buffer {
 class GPUShaderWrapper implements Shader {
   constructor(
     public pipeline: GPURenderPipeline,
-    public bindGroupLayout: GPUBindGroupLayout | null
+    public uniformBuffer: GPUBuffer,
+    public bindGroup: GPUBindGroup
   ) {}
 
   destroy(): void {
-    // Pipelines don't need explicit cleanup
+    this.uniformBuffer.destroy();
   }
 }
 
@@ -133,7 +134,26 @@ export class WebGPURenderer implements Renderer {
       },
     });
 
-    return new GPUShaderWrapper(pipeline, null);
+    const uniformBuffer = this.device.createBuffer({
+      size: 128, // 2 mat4x4 matrices
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    // create bind group
+    const bindGroupLayout = pipeline.getBindGroupLayout(0);
+    const bindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: uniformBuffer,
+          },
+        },
+      ],
+    });
+
+    return new GPUShaderWrapper(pipeline, uniformBuffer, bindGroup);
   }
 
   createMesh(descriptor: MeshDescriptor): Mesh {
@@ -158,7 +178,7 @@ export class WebGPURenderer implements Renderer {
     return new GPUMeshWrapper(vertexBuffer, indexBuffer, vertexCount, indexCount);
   }
 
-  render(scene: Scene, _camera: Camera): void {
+  render(scene: Scene, camera: Camera): void {
     const commandEncoder = this.device.createCommandEncoder();
     const textureView = this.context.getCurrentTexture().createView();
 
@@ -181,7 +201,13 @@ export class WebGPURenderer implements Renderer {
       const gpuMesh = mesh as GPUMeshWrapper;
       const shader = mesh.material.shader as GPUShaderWrapper;
 
+      const uniformData = new Float32Array(32); // 2 x mat4 = 32 floats
+      uniformData.set(camera.viewMatrix, 0);
+      uniformData.set(camera.projectionMatrix, 16);
+      this.device.queue.writeBuffer(shader.uniformBuffer, 0, uniformData);
+
       renderPass.setPipeline(shader.pipeline);
+      renderPass.setBindGroup(0, shader.bindGroup);
       renderPass.setVertexBuffer(0, gpuMesh.vertexBuffer.gpuBuffer);
 
       if (gpuMesh.indexBuffer && gpuMesh.indexCount) {

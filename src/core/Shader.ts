@@ -9,8 +9,10 @@ export interface Shader {
 
 export const vertexShaderWebGL = `
   attribute vec3 position;
+  uniform mat4 viewMatrix;
+  uniform mat4 projectionMatrix;
   void main() {
-    gl_Position = vec4(position, 1.0);
+    gl_Position = projectionMatrix * viewMatrix * vec4(position, 1.0);
   }
 `;
 
@@ -22,9 +24,16 @@ export const fragmentShaderWebGL = `
 `;
 
 export const vertexShaderWebGPU = `
+  struct Uniforms {
+    viewMatrix: mat4x4f,
+    projectionMatrix: mat4x4f,
+  };
+
+  @group(0) @binding(0) var<uniform> uniforms: Uniforms;
+
   @vertex
   fn vertexMain(@location(0) position: vec3f) -> @builtin(position) vec4f {
-    return vec4f(position, 1.0);
+    return uniforms.projectionMatrix * uniforms.viewMatrix * vec4f(position, 1.0);
   }
 `;
 

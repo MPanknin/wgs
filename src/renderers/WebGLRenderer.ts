@@ -16,7 +16,9 @@ class GLBuffer implements Buffer {
 class GLShader implements Shader {
   constructor(
     public program: WebGLProgram,
-    public positionLocation: number
+    public positionLocation: number,
+    public viewMatrixLocation: WebGLUniformLocation | null,
+    public projectionMatrixLocation: WebGLUniformLocation | null
   ) {}
 
   destroy(): void {
@@ -42,7 +44,7 @@ class GLMesh implements Mesh {
 export class WebGLRenderer implements Renderer {
   private gl: WebGLRenderingContext;
 
-  constructor(private canvas: HTMLCanvasElement) {
+  constructor(canvas: HTMLCanvasElement) {
     const gl = canvas.getContext('webgl');
     if (!gl) {
       throw new Error('WebGL not supported');
@@ -98,8 +100,10 @@ export class WebGLRenderer implements Renderer {
     }
 
     const positionLocation = gl.getAttribLocation(program, 'position');
+    const viewMatrixLocation = gl.getUniformLocation(program, 'viewMatrix');
+    const projectionMatrixLocation = gl.getUniformLocation(program, 'projectionMatrix');
 
-    return new GLShader(program, positionLocation);
+    return new GLShader(program, positionLocation, viewMatrixLocation, projectionMatrixLocation);
   }
 
   createMesh(descriptor: MeshDescriptor): Mesh {
@@ -124,7 +128,7 @@ export class WebGLRenderer implements Renderer {
     return new GLMesh(vertexBuffer, indexBuffer, vertexCount, indexCount);
   }
 
-  render(scene: Scene, _camera: Camera): void {
+  render(scene: Scene, camera: Camera): void {
     const { gl } = this;
 
     for (const mesh of scene.meshes) {
@@ -136,6 +140,14 @@ export class WebGLRenderer implements Renderer {
       const shader = mesh.material.shader as GLShader;
 
       gl.useProgram(shader.program);
+
+      // camera uniforms
+      if (shader.viewMatrixLocation) {
+        gl.uniformMatrix4fv(shader.viewMatrixLocation, false, camera.viewMatrix);
+      }
+      if (shader.projectionMatrixLocation) {
+        gl.uniformMatrix4fv(shader.projectionMatrixLocation, false, camera.projectionMatrix);
+      }
 
       gl.bindBuffer(gl.ARRAY_BUFFER, glMesh.vertexBuffer.glBuffer);
       gl.enableVertexAttribArray(shader.positionLocation);

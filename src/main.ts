@@ -3,6 +3,7 @@ import { WebGLRenderer } from './renderers/WebGLRenderer';
 import { WebGPURenderer } from './renderers/WebGPURenderer';
 import { Scene } from './core/Scene';
 import { Camera } from './core/Camera';
+import { CameraControl } from './core/CameraControl';
 import type { Renderer } from './core/Renderer';
 import { vertexShaderWebGPU, vertexShaderWebGL, fragmentShaderWebGPU, fragmentShaderWebGL } from './core/Shader';
 
@@ -15,9 +16,14 @@ if (!canvas) {
 }
 
 // Resize canvas to match display size
+let camera: Camera;
 function resizeCanvas() {
   canvas.width = window.innerWidth;
   canvas.height = window.innerHeight;
+  if (camera) {
+    camera.aspect = canvas.width / canvas.height;
+    camera.updateMatrices();
+  }
 }
 
 resizeCanvas();
@@ -44,7 +50,9 @@ async function main() {
   }
 
   const scene = new Scene();
-  const camera = new Camera();
+  camera = new Camera(canvas.width / canvas.height);
+
+  new CameraControl(camera, canvas);
 
   const shader = renderer.createShader({
     vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
@@ -59,10 +67,13 @@ async function main() {
 
   scene.add(mesh);
 
-  renderer.clear(0, 0, 0, 1);
-  renderer.render(scene, camera);
+  function animate() {
+    renderer.clear(0, 0, 0, 1);
+    renderer.render(scene, camera);
+    requestAnimationFrame(animate);
+  }
 
-  console.log('Triangle rendered!');
+  animate();
 }
 
 main().catch(console.error);
