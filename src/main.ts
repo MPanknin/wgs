@@ -52,7 +52,7 @@ async function main() {
 
 
   setupCanvas(canvas, camera, renderer);
-  new CameraControl(camera, canvas, 25);
+  new CameraControl(camera, canvas, 5);
 
 
 
@@ -72,22 +72,30 @@ async function main() {
     const splats = await loader.load('/models/banana.compressed.ply');
 
     const splatRoot = new Object3D();
-
+    const scaleFactor = 0.01; 
 
     splats.forEach((splat, index) => {
 
-      if (index > 100) {
-        return;    
+      if (index > 500) {
+        return;
       }
 
       const mesh = new Mesh({
         vertices: testQuad,
         indices: testQuadIndices,
-        material: matBlue,
+        material: new Material({
+          shader,
+          color: splat.color,
+          opacity: splat.opacity,
+        }),
       });
+
       mesh.position = splat.position;
-      mesh.scale = splat.scale;
-      mesh.rotation = splat.rotation;
+      mesh.scale = [
+        splat.scale[0] * scaleFactor,
+        splat.scale[1] * scaleFactor,
+        splat.scale[2] * scaleFactor
+      ];
       mesh.markMatrixDirty();
       splatRoot.addChild(mesh);
     });
@@ -103,7 +111,7 @@ async function main() {
     indices: testCubeIndices,
     material: matBlue,
   });
-  mesh1.position = [0, 0, 0];
+  mesh1.position = [0, 0, -5];
   mesh1.markMatrixDirty();
 
   scene.add(mesh1);
