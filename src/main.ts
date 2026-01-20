@@ -15,6 +15,8 @@ import {
 import { Material } from './core/Material';
 import { Mesh } from './core/Mesh';
 import { testCube, testCubeIndices, testQuad, testQuadIndices } from './Data';
+import { PLYLoader } from './loaders/PLYLoader';
+import { Object3D } from './core/Object3D';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 if (!canvas) {
@@ -47,14 +49,17 @@ async function main() {
   const renderer = await createRenderer(canvas);
   const scene = new Scene();
   const camera = new Camera(canvas.width / canvas.height);
+  
 
   setupCanvas(canvas, camera, renderer);
   new CameraControl(camera, canvas);
 
+
+
   const shader = new Shader({
     vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
     fragment: config.backend === 'webgpu' ? fragmentShaderWebGPU : fragmentShaderWebGL,
-  });
+  });  
 
   const matBlue = new Material({
     shader,
@@ -62,30 +67,45 @@ async function main() {
     opacity: 0.5,
   });
 
-  const matGreen = new Material({
-    shader,
-    color: [0.2, 0.6, 0.5],
-    opacity: 0.5,
-  });
+  const loader = new PLYLoader();
+  try {
+    const splats = await loader.load('/models/banana.compressed.ply');
+
+    const splatRoot = new Object3D();
+
+
+    splats.forEach((splat, index) => {
+
+      if (index > 100) {
+        return;    
+      }
+
+      const mesh = new Mesh({
+        vertices: testQuad,
+        indices: testQuadIndices,
+        material: matBlue,
+      });
+      mesh.position = splat.position;
+      mesh.scale = splat.scale;
+      mesh.rotation = splat.rotation;
+      mesh.markMatrixDirty();
+      splatRoot.addChild(mesh);
+    });
+
+    scene.add(splatRoot);
+
+  } catch (error) {
+    console.error('Failed to load PLY file:', error);
+  }
 
   const mesh1 = new Mesh({
     vertices: testCube,
     indices: testCubeIndices,
     material: matBlue,
   });
-  mesh1.position = [-0.6, 0, 0];
+  mesh1.position = [0, 0, 0];
   mesh1.markMatrixDirty();
 
-  const mesh2 = new Mesh({
-    vertices: testQuad,
-    indices: testQuadIndices,
-    material: matGreen,
-  });
-  mesh2.position = [0.2, 0, 0];
-  mesh2.scale = [0.7, 0.7, 0.7];
-  mesh2.markMatrixDirty();
-
-  mesh1.addChild(mesh2);
   scene.add(mesh1);
 
   function animate() {

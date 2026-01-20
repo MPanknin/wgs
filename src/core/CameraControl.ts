@@ -77,9 +77,9 @@ export class CameraControl {
       ];
 
       // Update target position
-      this.camera.target[0] -= right[0] * deltaX * panSpeed - up[0] * deltaY * panSpeed;
-      this.camera.target[1] -= right[1] * deltaX * panSpeed - up[1] * deltaY * panSpeed;
-      this.camera.target[2] -= right[2] * deltaX * panSpeed - up[2] * deltaY * panSpeed;
+      this.camera.target[0] -= (right[0]! * deltaX * panSpeed) - (up[0]! * deltaY * panSpeed);
+      this.camera.target[1] -= (right[1]! * deltaX * panSpeed) - (up[1]! * deltaY * panSpeed);
+      this.camera.target[2] -= (right[2]! * deltaX * panSpeed) - (up[2]! * deltaY * panSpeed);
     }
 
     this.updateCameraPosition();

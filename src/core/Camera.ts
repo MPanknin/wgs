@@ -2,7 +2,7 @@ import { mat4 } from 'gl-matrix';
 import type { Vec3 } from '../utils/Math';
 
 export class Camera {
-  position: Vec3 = [0, 0, 5];
+  position: Vec3 = [0, 0, 500];
   target: Vec3 = [0, 0, 0];
   up: Vec3 = [0, 1, 0];
 
