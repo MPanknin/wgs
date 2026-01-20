@@ -104,6 +104,7 @@ async function main() {
 
       instancedMesh.setInstanceData(i, {
         position: splat.position,
+        rotation: splat.rotation,
         scale: [
           splat.scale[0] * scaleFactor,
           splat.scale[1] * scaleFactor,

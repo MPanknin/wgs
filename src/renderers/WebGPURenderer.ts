@@ -103,7 +103,7 @@ export class WebGPURenderer implements Renderer {
     if (isInstanced) {
       // Add instance buffer layout
       vertexBuffers.push({
-        arrayStride: 40, // 10 floats * 4 bytes (pos:3, scale:3, color:3, opacity:1)
+        arrayStride: 56, // 14 floats * 4 bytes (pos:3, rot:4, scale:3, color:3, opacity:1)
         stepMode: 'instance',
         attributes: [
           {
@@ -112,18 +112,23 @@ export class WebGPURenderer implements Renderer {
             format: 'float32x3',
           },
           {
-            shaderLocation: 2, // instanceScale
+            shaderLocation: 2, // instanceRotation
             offset: 12,
+            format: 'float32x4',
+          },
+          {
+            shaderLocation: 3, // instanceScale
+            offset: 28,
             format: 'float32x3',
           },
           {
-            shaderLocation: 3, // instanceColor
-            offset: 24,
+            shaderLocation: 4, // instanceColor
+            offset: 40,
             format: 'float32x3',
           },
           {
-            shaderLocation: 4, // instanceOpacity
-            offset: 36,
+            shaderLocation: 5, // instanceOpacity
+            offset: 52,
             format: 'float32',
           },
         ],

@@ -218,8 +218,8 @@ export class WebGLRenderer implements Renderer {
         // bind instance buffer
         gl.bindBuffer(gl.ARRAY_BUFFER, meshResources.instanceBuffer);
 
-        // instance attributes (10 floats per instance: pos:3, scale:3, color:3, opacity:1)
-        const stride = 10 * 4; // 10 floats * 4 bytes
+        // instance attributes (14 floats per instance: pos:3, rot:4, scale:3, color:3, opacity:1)
+        const stride = 14 * 4; // 14 floats * 4 bytes
 
         const instancePosLoc = gl.getAttribLocation(shader.program, 'instancePosition');
         if (instancePosLoc !== -1) {
@@ -228,24 +228,31 @@ export class WebGLRenderer implements Renderer {
           this.instancedExt.vertexAttribDivisorANGLE(instancePosLoc, 1);
         }
 
+        const instanceRotLoc = gl.getAttribLocation(shader.program, 'instanceRotation');
+        if (instanceRotLoc !== -1) {
+          gl.enableVertexAttribArray(instanceRotLoc);
+          gl.vertexAttribPointer(instanceRotLoc, 4, gl.FLOAT, false, stride, 12);
+          this.instancedExt.vertexAttribDivisorANGLE(instanceRotLoc, 1);
+        }
+
         const instanceScaleLoc = gl.getAttribLocation(shader.program, 'instanceScale');
         if (instanceScaleLoc !== -1) {
           gl.enableVertexAttribArray(instanceScaleLoc);
-          gl.vertexAttribPointer(instanceScaleLoc, 3, gl.FLOAT, false, stride, 12);
+          gl.vertexAttribPointer(instanceScaleLoc, 3, gl.FLOAT, false, stride, 28);
           this.instancedExt.vertexAttribDivisorANGLE(instanceScaleLoc, 1);
         }
 
         const instanceColorLoc = gl.getAttribLocation(shader.program, 'instanceColor');
         if (instanceColorLoc !== -1) {
           gl.enableVertexAttribArray(instanceColorLoc);
-          gl.vertexAttribPointer(instanceColorLoc, 3, gl.FLOAT, false, stride, 24);
+          gl.vertexAttribPointer(instanceColorLoc, 3, gl.FLOAT, false, stride, 40);
           this.instancedExt.vertexAttribDivisorANGLE(instanceColorLoc, 1);
         }
 
         const instanceOpacityLoc = gl.getAttribLocation(shader.program, 'instanceOpacity');
         if (instanceOpacityLoc !== -1) {
           gl.enableVertexAttribArray(instanceOpacityLoc);
-          gl.vertexAttribPointer(instanceOpacityLoc, 1, gl.FLOAT, false, stride, 36);
+          gl.vertexAttribPointer(instanceOpacityLoc, 1, gl.FLOAT, false, stride, 52);
           this.instancedExt.vertexAttribDivisorANGLE(instanceOpacityLoc, 1);
         }
 
@@ -269,6 +276,7 @@ export class WebGLRenderer implements Renderer {
         }
 
         if (instancePosLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instancePosLoc, 0);
+        if (instanceRotLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceRotLoc, 0);
         if (instanceScaleLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceScaleLoc, 0);
         if (instanceColorLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceColorLoc, 0);
         if (instanceOpacityLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceOpacityLoc, 0);
