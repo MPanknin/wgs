@@ -15,17 +15,18 @@ class GPUBufferWrapper implements Buffer {
 
 class GPUShaderWrapper implements Shader {
   constructor(
-    public pipeline: GPURenderPipeline,
-    public uniformBuffer: GPUBuffer,
-    public bindGroup: GPUBindGroup
+    public pipeline: GPURenderPipeline
   ) {}
 
   destroy(): void {
-    this.uniformBuffer.destroy();
+    // Pipeline is managed by the device
   }
 }
 
 class GPUMeshWrapper extends Mesh {
+  public uniformBuffer?: GPUBuffer;
+  public bindGroup?: GPUBindGroup;
+
   constructor(
     public vertexBuffer: GPUBufferWrapper,
     public indexBuffer: GPUBufferWrapper | undefined,
@@ -38,6 +39,7 @@ class GPUMeshWrapper extends Mesh {
   destroy(): void {
     this.vertexBuffer.destroy();
     this.indexBuffer?.destroy();
+    this.uniformBuffer?.destroy();
   }
 }
 
@@ -162,26 +164,7 @@ export class WebGPURenderer implements Renderer {
       },
     });
 
-    const uniformBuffer = this.device.createBuffer({
-      size: 208, // 3 mat4x4 matrices (192) + vec3 color (12) + f32 opacity (4)
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
-    });
-
-    // create bind group
-    const bindGroupLayout = pipeline.getBindGroupLayout(0);
-    const bindGroup = this.device.createBindGroup({
-      layout: bindGroupLayout,
-      entries: [
-        {
-          binding: 0,
-          resource: {
-            buffer: uniformBuffer,
-          },
-        },
-      ],
-    });
-
-    return new GPUShaderWrapper(pipeline, uniformBuffer, bindGroup);
+    return new GPUShaderWrapper(pipeline);
   }
 
   createMesh(descriptor: MeshDescriptor): Mesh {
@@ -237,6 +220,26 @@ export class WebGPURenderer implements Renderer {
       const gpuMesh = mesh as GPUMeshWrapper;
       const shader = mesh.material.shader as GPUShaderWrapper;
 
+      if (!gpuMesh.uniformBuffer || !gpuMesh.bindGroup) {
+        gpuMesh.uniformBuffer = this.device.createBuffer({
+          size: 208, // 3 mat4x4 matrices (192) + vec3 color (12) + f32 opacity (4)
+          usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+        });
+
+        const bindGroupLayout = shader.pipeline.getBindGroupLayout(0);
+        gpuMesh.bindGroup = this.device.createBindGroup({
+          layout: bindGroupLayout,
+          entries: [
+            {
+              binding: 0,
+              resource: {
+                buffer: gpuMesh.uniformBuffer,
+              },
+            },
+          ],
+        });
+      }
+
       const uniformData = new Float32Array(52); // 3 x mat4 + vec3 + f32 = 52 floats
       uniformData.set(mesh.worldMatrix, 0);
       uniformData.set(camera.viewMatrix, 16);
@@ -252,10 +255,10 @@ export class WebGPURenderer implements Renderer {
       const opacity = mesh.material.opacity ?? 1.0;
       uniformData[51] = opacity;
 
-      this.device.queue.writeBuffer(shader.uniformBuffer, 0, uniformData);
+      this.device.queue.writeBuffer(gpuMesh.uniformBuffer, 0, uniformData);
 
       renderPass.setPipeline(shader.pipeline);
-      renderPass.setBindGroup(0, shader.bindGroup);
+      renderPass.setBindGroup(0, gpuMesh.bindGroup);
       renderPass.setVertexBuffer(0, gpuMesh.vertexBuffer.gpuBuffer);
 
       if (gpuMesh.indexBuffer && gpuMesh.indexCount) {
