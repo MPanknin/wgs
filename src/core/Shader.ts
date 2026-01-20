@@ -68,10 +68,12 @@ export const vertexShaderWebGLInstanced = `
 
   varying vec3 vColor;
   varying float vOpacity;
+  varying vec2 vUv;
 
   void main() {
     vColor = instanceColor;
     vOpacity = instanceOpacity;
+    vUv = position.xy; 
 
     vec3 scaledPos = position * instanceScale;
     vec3 worldPos = scaledPos + instancePosition;
@@ -84,9 +86,23 @@ export const fragmentShaderWebGLInstanced = `
   precision mediump float;
   varying vec3 vColor;
   varying float vOpacity;
+  varying vec2 vUv;
 
   void main() {
-    gl_FragColor = vec4(vColor, vOpacity);
+    // convert uv from -0.5..0.5 to -1..1
+    vec2 centered = vUv * 2.0;
+
+    // dist squared from center
+    float distSq = dot(centered, centered);
+
+    // gaussian falloff: exp(-0.5 * r^2)
+    float gaussian = exp(-0.5 * distSq);
+    float alpha = gaussian * vOpacity;
+
+    // sanity discard
+    if (alpha < 0.01) discard;
+
+    gl_FragColor = vec4(vColor, alpha);
   }
 `;
 
@@ -100,6 +116,7 @@ export const vertexShaderWebGPUInstanced = `
     @builtin(position) position: vec4f,
     @location(0) color: vec3f,
     @location(1) opacity: f32,
+    @location(2) uv: vec2f,
   }
 
   @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -120,6 +137,7 @@ export const vertexShaderWebGPUInstanced = `
     output.position = uniforms.projectionMatrix * uniforms.viewMatrix * vec4f(worldPos, 1.0);
     output.color = instanceColor;
     output.opacity = instanceOpacity;
+    output.uv = position.xy; // Position is -0.5 to 0.5 for quad
 
     return output;
   }
@@ -129,9 +147,25 @@ export const fragmentShaderWebGPUInstanced = `
   @fragment
   fn fragmentMain(
     @location(0) color: vec3f,
-    @location(1) opacity: f32
+    @location(1) opacity: f32,
+    @location(2) uv: vec2f
   ) -> @location(0) vec4f {
-    return vec4f(color, opacity);
+    // convert uv from -0.5..0.5 to -1..1
+    let centered = uv * 2.0;
+
+    // dist squared from center
+    let distSq = dot(centered, centered);
+
+    // gaussian falloff: exp(-0.5 * r^2)
+    let gaussian = exp(-0.5 * distSq);
+    let alpha = gaussian * opacity;
+
+    // sanity discard
+    if (alpha < 0.01) {
+      discard;
+    }
+
+    return vec4f(color, alpha);
   }
 `;
 
