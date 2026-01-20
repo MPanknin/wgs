@@ -12,10 +12,20 @@ export class CameraControl {
   constructor(
     private camera: Camera,
     private element: HTMLElement,
-    distance = 5
+    distance?: number
   ) {
-    this.distance = distance;
-    this.updateCameraPosition();
+    // initial theta, phi, and distance from current camera position
+    const dx = this.camera.position[0] - this.camera.target[0];
+    const dy = this.camera.position[1] - this.camera.target[1];
+    const dz = this.camera.position[2] - this.camera.target[2];
+
+    this.distance = distance ?? Math.sqrt(dx * dx + dy * dy + dz * dz);
+
+    // initial spherical coordinates from camera position
+    const horizontalDist = Math.sqrt(dx * dx + dz * dz);
+    this.theta = Math.atan2(dx, dz);
+    this.phi = Math.atan2(dy, horizontalDist);
+
     this.setupEventListeners();
   }
 

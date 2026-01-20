@@ -2,14 +2,14 @@ import { mat4 } from 'gl-matrix';
 import type { Vec3 } from '../utils/Math';
 
 export class Camera {
-  position: Vec3 = [0, 0, 500];
+  position: Vec3 = [0, 5, 5];
   target: Vec3 = [0, 0, 0];
   up: Vec3 = [0, 1, 0];
 
   fov: number = 60;
   aspect: number = 1;
   near: number = 0.1;
-  far: number = 100;
+  far: number = 1000;
 
   viewMatrix: Float32Array = new Float32Array(16);
   projectionMatrix: Float32Array = new Float32Array(16);
