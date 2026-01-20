@@ -62,26 +62,41 @@ export class CameraControl {
       // clamp vertical rotation
       this.phi = Math.max(-Math.PI / 2 + 0.1, Math.min(Math.PI / 2 - 0.1, this.phi));
     } else if (this.isPanning) {
-      // pan camera
+      // pan camera in screen space
       const panSpeed = 0.005 * this.distance;
 
-      // Calculate right and up vectors based on camera orientation
-      const right = [
-        Math.cos(this.theta),
-        0,
-        -Math.sin(this.theta),
-      ];
+      // calculate camera direction vector
+      const dirX = this.camera.target[0] - this.camera.position[0];
+      const dirY = this.camera.target[1] - this.camera.position[1];
+      const dirZ = this.camera.target[2] - this.camera.position[2];
 
-      const up = [
-        Math.sin(this.phi) * Math.sin(this.theta),
-        Math.cos(this.phi),
-        Math.sin(this.phi) * Math.cos(this.theta),
-      ];
+      // normalize direction
+      const dirLen = Math.sqrt(dirX * dirX + dirY * dirY + dirZ * dirZ);
+      const dirNormX = dirX / dirLen;
+      const dirNormY = dirY / dirLen;
+      const dirNormZ = dirZ / dirLen;
 
-      // Update target position
-      this.camera.target[0] -= (right[0]! * deltaX * panSpeed) - (up[0]! * deltaY * panSpeed);
-      this.camera.target[1] -= (right[1]! * deltaX * panSpeed) - (up[1]! * deltaY * panSpeed);
-      this.camera.target[2] -= (right[2]! * deltaX * panSpeed) - (up[2]! * deltaY * panSpeed);
+      // calculate right vector (cross product of direction and world up)
+      const worldUp = [0, 1, 0];
+      const rightX = dirNormY * worldUp[2] - dirNormZ * worldUp[1];
+      const rightY = dirNormZ * worldUp[0] - dirNormX * worldUp[2];
+      const rightZ = dirNormX * worldUp[1] - dirNormY * worldUp[0];
+
+      // normalize right vector
+      const rightLen = Math.sqrt(rightX * rightX + rightY * rightY + rightZ * rightZ);
+      const rightNormX = rightX / rightLen;
+      const rightNormY = rightY / rightLen;
+      const rightNormZ = rightZ / rightLen;
+
+      // calculate up vector (cross product of right and direction)
+      const upX = rightNormY * dirNormZ - rightNormZ * dirNormY;
+      const upY = rightNormZ * dirNormX - rightNormX * dirNormZ;
+      const upZ = rightNormX * dirNormY - rightNormY * dirNormX;
+
+      // update target position based on screen-space pan
+      this.camera.target[0] -= rightNormX * deltaX * panSpeed - upX * deltaY * panSpeed;
+      this.camera.target[1] -= rightNormY * deltaX * panSpeed - upY * deltaY * panSpeed;
+      this.camera.target[2] -= rightNormZ * deltaX * panSpeed - upZ * deltaY * panSpeed;
     }
 
     this.updateCameraPosition();

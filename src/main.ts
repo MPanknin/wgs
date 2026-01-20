@@ -78,7 +78,7 @@ async function main() {
     const splats = await loader.load('/models/banana.compressed.ply');
 
     const scaleFactor = 0.01;
-    const maxSplats = Math.min(splats.length, 150000); 
+    const maxSplats = Math.min(splats.length, 250000); 
 
     const instancedShader = new Shader({
       vertex: config.backend === 'webgpu' ? vertexShaderWebGPUInstanced : vertexShaderWebGLInstanced,
@@ -130,7 +130,7 @@ async function main() {
   mesh1.position = [0, 0, -5];
   mesh1.markMatrixDirty();
 
-  scene.add(mesh1);
+  // scene.add(mesh1);
 
   function animate() {
     renderer.clear(0, 0, 0, 1);
