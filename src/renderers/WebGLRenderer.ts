@@ -198,9 +198,21 @@ export class WebGLRenderer implements Renderer {
         if (!obj.material?.shader || !this.instancedExt) {
           continue;
         }
+        // todo: this needs to be exclusie only for splat meshes
+        // sort instances if camera moved
+        if (obj.shouldSort(camera.position)) {
+          obj.sortInstances(camera.position);
+        }
 
         const shader = this.getOrCreateShaderResources(obj.material.shader);
         const meshResources = this.getOrCreateInstancedMeshResources(obj);
+
+        // re-upload instance buffer if it was sorted
+        if (obj.needsBufferUpdate) {
+          gl.bindBuffer(gl.ARRAY_BUFFER, meshResources.instanceBuffer);
+          gl.bufferSubData(gl.ARRAY_BUFFER, 0, obj.instanceData);
+          obj.needsBufferUpdate = false;
+        }
 
         gl.useProgram(shader.program);
 

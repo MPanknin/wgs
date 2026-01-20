@@ -337,11 +337,20 @@ export class WebGPURenderer implements Renderer {
       }
 
       if (obj instanceof InstancedMesh) {
+        // todo: this needs to be exclusie only for splat meshes
+        // sort instances if camera moved
+        if (obj.shouldSort(camera.position)) {
+          obj.sortInstances(camera.position);
+        }
+
         const shader = this.getOrCreateShaderResources(obj.material.shader);
         const meshResources = this.getOrCreateInstancedMeshResources(obj, obj.material.shader);
 
-        // update instance buffer with latest data
-        this.device.queue.writeBuffer(meshResources.instanceBuffer, 0, obj.instanceData.buffer, obj.instanceData.byteOffset, obj.instanceData.byteLength);
+        // update instance buffer with latest data (always update for now, or only when needsBufferUpdate is true)
+        if (obj.needsBufferUpdate) {
+          this.device.queue.writeBuffer(meshResources.instanceBuffer, 0, obj.instanceData.buffer, obj.instanceData.byteOffset, obj.instanceData.byteLength);
+          obj.needsBufferUpdate = false;
+        }
 
         // uniform data: only view and projection matrices (32 floats)
         const uniformData = new Float32Array(32);
