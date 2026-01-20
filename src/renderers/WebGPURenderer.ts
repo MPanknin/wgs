@@ -3,6 +3,7 @@ import type { Scene } from '../core/Scene';
 import type { Camera } from '../core/Camera';
 import { Shader } from '../core/Shader';
 import { Mesh } from '../core/Mesh';
+import { InstancedMesh } from '../core/InstancedMesh';
 
 interface GPUShaderResources {
   pipeline: GPURenderPipeline;
@@ -17,6 +18,17 @@ interface GPUMeshResources {
   bindGroup: GPUBindGroup;
 }
 
+interface GPUInstancedMeshResources {
+  vertexBuffer: GPUBuffer;
+  indexBuffer?: GPUBuffer;
+  vertexCount: number;
+  indexCount?: number;
+  instanceBuffer: GPUBuffer;
+  instanceCount: number;
+  uniformBuffer: GPUBuffer;
+  bindGroup: GPUBindGroup;
+}
+
 export class WebGPURenderer implements Renderer {
   private device!: GPUDevice;
   private context!: GPUCanvasContext;
@@ -24,6 +36,7 @@ export class WebGPURenderer implements Renderer {
   private depthTexture!: GPUTexture;
   private shaderResources = new WeakMap<Shader, GPUShaderResources>();
   private meshResources = new WeakMap<Mesh, GPUMeshResources>();
+  private instancedMeshResources = new WeakMap<InstancedMesh, GPUInstancedMeshResources>();
 
   constructor(private canvas: HTMLCanvasElement) {}
 
@@ -71,23 +84,58 @@ export class WebGPURenderer implements Renderer {
       code: shader.vertex + '\n' + shader.fragment,
     });
 
+    // todo: this is ugly 
+    const isInstanced = shader.vertex.includes('instancePosition');
+
+    const vertexBuffers: GPUVertexBufferLayout[] = [
+      {
+        arrayStride: 12, // 3 floats * 4 bytes (vertex position)
+        attributes: [
+          {
+            shaderLocation: 0,
+            offset: 0,
+            format: 'float32x3',
+          },
+        ],
+      },
+    ];
+
+    if (isInstanced) {
+      // Add instance buffer layout
+      vertexBuffers.push({
+        arrayStride: 40, // 10 floats * 4 bytes (pos:3, scale:3, color:3, opacity:1)
+        stepMode: 'instance',
+        attributes: [
+          {
+            shaderLocation: 1, // instancePosition
+            offset: 0,
+            format: 'float32x3',
+          },
+          {
+            shaderLocation: 2, // instanceScale
+            offset: 12,
+            format: 'float32x3',
+          },
+          {
+            shaderLocation: 3, // instanceColor
+            offset: 24,
+            format: 'float32x3',
+          },
+          {
+            shaderLocation: 4, // instanceOpacity
+            offset: 36,
+            format: 'float32',
+          },
+        ],
+      });
+    }
+
     const pipeline = this.device.createRenderPipeline({
       layout: 'auto',
       vertex: {
         module: shaderModule,
         entryPoint: 'vertexMain',
-        buffers: [
-          {
-            arrayStride: 12, // 3 floats * 4 bytes
-            attributes: [
-              {
-                shaderLocation: 0,
-                offset: 0,
-                format: 'float32x3',
-              },
-            ],
-          },
-        ],
+        buffers: vertexBuffers,
       },
       fragment: {
         module: shaderModule,
@@ -185,6 +233,76 @@ export class WebGPURenderer implements Renderer {
     return resources;
   }
 
+  private getOrCreateInstancedMeshResources(mesh: InstancedMesh, shader: Shader): GPUInstancedMeshResources {
+    let resources = this.instancedMeshResources.get(mesh);
+    if (resources) return resources;
+
+    const vertexBuffer = this.device.createBuffer({
+      size: mesh.vertices.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Float32Array(vertexBuffer.getMappedRange()).set(mesh.vertices);
+    vertexBuffer.unmap();
+
+    let indexBuffer: GPUBuffer | undefined;
+    let indexCount: number | undefined;
+
+    if (mesh.indices) {
+      indexBuffer = this.device.createBuffer({
+        size: mesh.indices.byteLength,
+        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
+        mappedAtCreation: true,
+      });
+      new Uint16Array(indexBuffer.getMappedRange()).set(mesh.indices);
+      indexBuffer.unmap();
+      indexCount = mesh.indices.length;
+    }
+
+    const vertexCount = mesh.vertices.length / 3;
+
+    const instanceBuffer = this.device.createBuffer({
+      size: mesh.instanceData.byteLength,
+      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+      mappedAtCreation: true,
+    });
+    new Float32Array(instanceBuffer.getMappedRange()).set(mesh.instanceData);
+    instanceBuffer.unmap();
+
+    const uniformBuffer = this.device.createBuffer({
+      size: 128, // 2 mat4x4 matrices (view + projection = 128 bytes)
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+    });
+
+    const shaderResources = this.getOrCreateShaderResources(shader);
+    const bindGroupLayout = shaderResources.pipeline.getBindGroupLayout(0);
+    const bindGroup = this.device.createBindGroup({
+      layout: bindGroupLayout,
+      entries: [
+        {
+          binding: 0,
+          resource: {
+            buffer: uniformBuffer,
+          },
+        },
+      ],
+    });
+
+    resources = {
+      vertexBuffer,
+      indexBuffer,
+      vertexCount,
+      indexCount,
+      instanceBuffer,
+      instanceCount: mesh.instanceCount,
+      uniformBuffer,
+      bindGroup,
+    };
+
+    this.instancedMeshResources.set(mesh, resources);
+    return resources;
+  }
+
   render(scene: Scene, camera: Camera): void {
     scene.updateMatrixWorld();
 
@@ -208,38 +326,66 @@ export class WebGPURenderer implements Renderer {
       },
     });
 
-    for (const mesh of scene.getMeshes()) {
-      if (!mesh.material?.shader) {
+    for (const obj of scene.getMeshes()) {
+      if (!obj.material?.shader) {
         continue;
       }
 
-      const shader = this.getOrCreateShaderResources(mesh.material.shader);
-      const meshResources = this.getOrCreateMeshResources(mesh, mesh.material.shader);
+      if (obj instanceof InstancedMesh) {
+        const shader = this.getOrCreateShaderResources(obj.material.shader);
+        const meshResources = this.getOrCreateInstancedMeshResources(obj, obj.material.shader);
 
-      const uniformData = new Float32Array(52); // 3 x mat4 + vec3 + f32 = 52 floats
-      uniformData.set(mesh.worldMatrix, 0);
-      uniformData.set(camera.viewMatrix, 16);
-      uniformData.set(camera.projectionMatrix, 32);
+        // update instance buffer with latest data
+        this.device.queue.writeBuffer(meshResources.instanceBuffer, 0, obj.instanceData.buffer, obj.instanceData.byteOffset, obj.instanceData.byteLength);
 
-      // set color (offset 48)
-      uniformData[48] = mesh.material.color[0];
-      uniformData[49] = mesh.material.color[1];
-      uniformData[50] = mesh.material.color[2];
+        // uniform data: only view and projection matrices (32 floats)
+        const uniformData = new Float32Array(32);
+        uniformData.set(camera.viewMatrix, 0);
+        uniformData.set(camera.projectionMatrix, 16);
 
-      // set opacity (offset 51, right after vec3)
-      uniformData[51] = mesh.material.opacity;
+        this.device.queue.writeBuffer(meshResources.uniformBuffer, 0, uniformData);
 
-      this.device.queue.writeBuffer(meshResources.uniformBuffer, 0, uniformData);
+        renderPass.setPipeline(shader.pipeline);
+        renderPass.setBindGroup(0, meshResources.bindGroup);
+        renderPass.setVertexBuffer(0, meshResources.vertexBuffer);
+        renderPass.setVertexBuffer(1, meshResources.instanceBuffer);
 
-      renderPass.setPipeline(shader.pipeline);
-      renderPass.setBindGroup(0, meshResources.bindGroup);
-      renderPass.setVertexBuffer(0, meshResources.vertexBuffer);
+        if (meshResources.indexBuffer && meshResources.indexCount) {
+          renderPass.setIndexBuffer(meshResources.indexBuffer, 'uint16');
+          renderPass.drawIndexed(meshResources.indexCount, meshResources.instanceCount);
+        } else {
+          renderPass.draw(meshResources.vertexCount, meshResources.instanceCount);
+        }
 
-      if (meshResources.indexBuffer && meshResources.indexCount) {
-        renderPass.setIndexBuffer(meshResources.indexBuffer, 'uint16');
-        renderPass.drawIndexed(meshResources.indexCount);
-      } else {
-        renderPass.draw(meshResources.vertexCount);
+      } else if (obj instanceof Mesh) {
+        const shader = this.getOrCreateShaderResources(obj.material.shader);
+        const meshResources = this.getOrCreateMeshResources(obj, obj.material.shader);
+
+        const uniformData = new Float32Array(52); // 3 x mat4 + vec3 + f32 = 52 floats
+        uniformData.set(obj.worldMatrix, 0);
+        uniformData.set(camera.viewMatrix, 16);
+        uniformData.set(camera.projectionMatrix, 32);
+
+        // set color (offset 48)
+        uniformData[48] = obj.material.color[0];
+        uniformData[49] = obj.material.color[1];
+        uniformData[50] = obj.material.color[2];
+
+        // set opacity (offset 51, right after vec3)
+        uniformData[51] = obj.material.opacity;
+
+        this.device.queue.writeBuffer(meshResources.uniformBuffer, 0, uniformData);
+
+        renderPass.setPipeline(shader.pipeline);
+        renderPass.setBindGroup(0, meshResources.bindGroup);
+        renderPass.setVertexBuffer(0, meshResources.vertexBuffer);
+
+        if (meshResources.indexBuffer && meshResources.indexCount) {
+          renderPass.setIndexBuffer(meshResources.indexBuffer, 'uint16');
+          renderPass.drawIndexed(meshResources.indexCount);
+        } else {
+          renderPass.draw(meshResources.vertexCount);
+        }
       }
     }
 

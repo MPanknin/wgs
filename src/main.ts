@@ -14,9 +14,15 @@ import {
 } from './core/Shader';
 import { Material } from './core/Material';
 import { Mesh } from './core/Mesh';
+import { InstancedMesh } from './core/InstancedMesh';
 import { testCube, testCubeIndices, testQuad, testQuadIndices } from './Data';
 import { PLYLoader } from './loaders/PLYLoader';
-import { Object3D } from './core/Object3D';
+import {
+  vertexShaderWebGLInstanced,
+  fragmentShaderWebGLInstanced,
+  vertexShaderWebGPUInstanced,
+  fragmentShaderWebGPUInstanced,
+} from './core/Shader';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 if (!canvas) {
@@ -71,36 +77,45 @@ async function main() {
   try {
     const splats = await loader.load('/models/banana.compressed.ply');
 
-    const splatRoot = new Object3D();
-    const scaleFactor = 0.01; 
+    const scaleFactor = 0.01;
+    const maxSplats = Math.min(splats.length, 150000); 
 
-    splats.forEach((splat, index) => {
-
-      if (index > 500) {
-        return;
-      }
-
-      const mesh = new Mesh({
-        vertices: testQuad,
-        indices: testQuadIndices,
-        material: new Material({
-          shader,
-          color: splat.color,
-          opacity: splat.opacity,
-        }),
-      });
-
-      mesh.position = splat.position;
-      mesh.scale = [
-        splat.scale[0] * scaleFactor,
-        splat.scale[1] * scaleFactor,
-        splat.scale[2] * scaleFactor
-      ];
-      mesh.markMatrixDirty();
-      splatRoot.addChild(mesh);
+    const instancedShader = new Shader({
+      vertex: config.backend === 'webgpu' ? vertexShaderWebGPUInstanced : vertexShaderWebGLInstanced,
+      fragment: config.backend === 'webgpu' ? fragmentShaderWebGPUInstanced : fragmentShaderWebGLInstanced,
     });
 
-    scene.add(splatRoot);
+    const instancedMaterial = new Material({
+      shader: instancedShader,
+      color: [1, 1, 1],
+      opacity: 1.0,
+    });
+
+    const instancedMesh = new InstancedMesh({
+      vertices: testQuad,
+      indices: testQuadIndices,
+      material: instancedMaterial,
+      instanceCount: maxSplats,
+    });
+
+    for (let i = 0; i < maxSplats; i++) {
+      const splat = splats[i];
+      if (!splat) continue;
+
+      instancedMesh.setInstanceData(i, {
+        position: splat.position,
+        scale: [
+          splat.scale[0] * scaleFactor,
+          splat.scale[1] * scaleFactor,
+          splat.scale[2] * scaleFactor,
+        ],
+        color: splat.color,
+        opacity: splat.opacity,
+      });
+    }
+
+    scene.add(instancedMesh);
+    console.log(`Created instanced mesh with ${maxSplats} instances`);
 
   } catch (error) {
     console.error('Failed to load PLY file:', error);
