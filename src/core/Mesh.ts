@@ -4,10 +4,18 @@ import { Object3D } from './Object3D';
 export interface MeshDescriptor {
   vertices: Float32Array;
   indices?: Uint16Array;
+  material?: Material;
 }
 
-export abstract class Mesh extends Object3D {
+export class Mesh extends Object3D {
+  vertices: Float32Array;
+  indices?: Uint16Array;
   material?: Material;
 
-  abstract destroy(): void;
+  constructor(descriptor: MeshDescriptor) {
+    super();
+    this.vertices = descriptor.vertices;
+    this.indices = descriptor.indices;
+    this.material = descriptor.material;
+  }
 }

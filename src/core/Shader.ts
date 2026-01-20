@@ -3,8 +3,14 @@ export interface ShaderDescriptor {
   fragment: string;
 }
 
-export interface Shader {
-  destroy(): void;
+export class Shader {
+  vertex: string;
+  fragment: string;
+
+  constructor(descriptor: ShaderDescriptor) {
+    this.vertex = descriptor.vertex;
+    this.fragment = descriptor.fragment;
+  }
 }
 
 export const vertexShaderWebGL = `

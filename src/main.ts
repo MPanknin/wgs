@@ -6,11 +6,14 @@ import { Camera } from './core/Camera';
 import { CameraControl } from './core/CameraControl';
 import type { Renderer } from './core/Renderer';
 import {
+  Shader,
   vertexShaderWebGPU,
   vertexShaderWebGL,
   fragmentShaderWebGPU,
   fragmentShaderWebGL,
 } from './core/Shader';
+import { Material } from './core/Material';
+import { Mesh } from './core/Mesh';
 import { testTriangle } from './Data';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
@@ -48,28 +51,34 @@ async function main() {
   setupCanvas(canvas, camera, renderer);
   new CameraControl(camera, canvas);
 
-  const shader = renderer.createShader({
+  const shader = new Shader({
     vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
     fragment: config.backend === 'webgpu' ? fragmentShaderWebGPU : fragmentShaderWebGL,
   });
 
-  const mesh1 = renderer.createMesh({ vertices: testTriangle });
-  mesh1.material = {
-    shader: shader,
+  const matBlue = new Material({
+    shader,
     color: [0.2, 0.6, 1.0],
-    opacity: 0.5
-  };
+    opacity: 0.5,
+  });
 
+  const matGreen = new Material({
+    shader,
+    color: [0.2, 0.6, 0.5],
+    opacity: 0.5,
+  });
+
+  const mesh1 = new Mesh({
+    vertices: testTriangle,
+    material: matBlue,
+  });
   mesh1.position = [-0.6, 0, 0];
   mesh1.markMatrixDirty();
 
-  const mesh2 = renderer.createMesh({ vertices: testTriangle });
-  mesh2.material = {
-    shader: shader,
-    color: [0.2, 0.6, 0.5],
-    opacity: 0.5
-  };
-
+  const mesh2 = new Mesh({
+    vertices: testTriangle,
+    material: matGreen,
+  });
   mesh2.position = [0.2, 0, 0];
   mesh2.scale = [0.7, 0.7, 0.7];
   mesh2.markMatrixDirty();
