@@ -133,7 +133,7 @@ async function main() {
   // scene.add(mesh1);
 
   function animate() {
-    renderer.clear(0, 0, 0, 1);
+    renderer.clear(0.5, 0.5, 0.5, 1);
     renderer.render(scene, camera);
     requestAnimationFrame(animate);
   }
