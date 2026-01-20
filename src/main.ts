@@ -14,7 +14,7 @@ import {
 } from './core/Shader';
 import { Material } from './core/Material';
 import { Mesh } from './core/Mesh';
-import { testTriangle } from './Data';
+import { testCube, testCubeIndices, testQuad, testQuadIndices } from './Data';
 
 const canvas = document.getElementById('canvas') as HTMLCanvasElement;
 if (!canvas) {
@@ -69,14 +69,16 @@ async function main() {
   });
 
   const mesh1 = new Mesh({
-    vertices: testTriangle,
+    vertices: testCube,
+    indices: testCubeIndices,
     material: matBlue,
   });
   mesh1.position = [-0.6, 0, 0];
   mesh1.markMatrixDirty();
 
   const mesh2 = new Mesh({
-    vertices: testTriangle,
+    vertices: testQuad,
+    indices: testQuadIndices,
     material: matGreen,
   });
   mesh2.position = [0.2, 0, 0];
