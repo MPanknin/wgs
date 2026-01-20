@@ -185,7 +185,7 @@ export class PLYLoader {
 
       const position: [number, number, number] = [
         chunk.minX + px * (chunk.maxX - chunk.minX),
-        -(chunk.minY + py * (chunk.maxY - chunk.minY)),
+        chunk.minY + py * (chunk.maxY - chunk.minY),
         chunk.minZ + pz * (chunk.maxZ - chunk.minZ),
       ];
 

@@ -216,6 +216,9 @@ export class WebGLRenderer implements Renderer {
 
         gl.useProgram(shader.program);
 
+        if (shader.modelMatrixLocation) {
+          gl.uniformMatrix4fv(shader.modelMatrixLocation, false, obj.worldMatrix);
+        }
         if (shader.viewMatrixLocation) {
           gl.uniformMatrix4fv(shader.viewMatrixLocation, false, camera.viewMatrix);
         }

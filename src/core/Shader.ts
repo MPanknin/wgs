@@ -100,64 +100,19 @@ export const vertexShaderWebGLInstanced = `
   void main() {
     vColor = instanceColor;
     vOpacity = instanceOpacity;
-
-    // construct rotation matrix from quaternion
-    mat3 R = quatToMat3(instanceRotation);
-
-    // construct scale matrix
-    mat3 S = mat3(
-      instanceScale.x, 0.0, 0.0,
-      0.0, instanceScale.y, 0.0,
-      0.0, 0.0, instanceScale.z
-    );
-
-    // 3D covariance matrix: sigma = R * S * S^T * R^T
-    mat3 RS = R * S;
-    mat3 Sigma = RS * transpose3(RS);
-
-    // extract view matrix rotation (upper 3x3)
-    mat3 W = mat3(
-      viewMatrix[0].xyz,
-      viewMatrix[1].xyz,
-      viewMatrix[2].xyz
-    );
-
-    // transform covariance to view space
-    mat3 T = W * Sigma;
-    mat3 covView = T * transpose3(W);
-
-    // project to 2D (Jacobian of perspective projection)
-    vec4 viewPos = viewMatrix * vec4(instancePosition, 1.0);
-    float z = -viewPos.z;
-    float focal = projectionMatrix[0][0] * 0.5; // approximate focal length from projection
-
-    // 2D covariance matrix elements
-    float a = covView[0][0];
-    float b = covView[0][1];
-    float c = covView[1][1];
-
-    float det = a * c - b * b;
-    if (det == 0.0) det = 1e-6;
-
-    // inverse of 2D covariance (for Gaussian evaluation in fragment shader)
-    float invDet = 1.0 / det;
-    vConic = vec3(c * invDet, -b * invDet, a * invDet); // (A, B, C) where A*x^2 + 2*B*xy + C*y^2
-
-    // compute extent of the 2D Gaussian (3 sigma)
-    float mid = 0.5 * (a + c);
-    float discriminant = sqrt(max(0.0, mid * mid - det));
-    float lambda1 = mid + discriminant;
-    float lambda2 = mid - discriminant;
-    float radius = 3.0 * sqrt(max(lambda1, lambda2));
-
-    // scale quad vertices by the radius
-    vec2 scaledVertex = position.xy * radius * 2.0;
-
-    // transform to screen space
-    vec4 clipPos = projectionMatrix * vec4(viewPos.xyz + vec3(scaledVertex / focal, 0.0), 1.0);
-    gl_Position = clipPos;
-
     vUv = position.xy;
+
+    // Simple identity conic (circular Gaussian)
+    vConic = vec3(1.0, 0.0, 1.0);
+
+    // Apply instance scale to quad vertex
+    vec3 scaledPos = position * instanceScale;
+
+    // Transform to world space
+    vec4 worldPos = vec4(instancePosition + scaledPos, 1.0);
+
+    // Transform to clip space
+    gl_Position = projectionMatrix * viewMatrix * worldPos;
   }
 `;
 
@@ -241,67 +196,21 @@ export const vertexShaderWebGPUInstanced = `
   ) -> VertexOutput {
     var output: VertexOutput;
 
-    // construct rotation matrix from quaternion
-    let R = quatToMat3(instanceRotation);
-
-    // construct scale matrix
-    let S = mat3x3f(
-      instanceScale.x, 0.0, 0.0,
-      0.0, instanceScale.y, 0.0,
-      0.0, 0.0, instanceScale.z
-    );
-
-    // 3D covariance matrix: Sigma = R * S * S^T * R^T
-    let RS = R * S;
-    let Sigma = RS * transpose(RS);
-
-    // extract view matrix rotation (upper 3x3)
-    let W = mat3x3f(
-      uniforms.viewMatrix[0].xyz,
-      uniforms.viewMatrix[1].xyz,
-      uniforms.viewMatrix[2].xyz
-    );
-
-    // transform covariance to view space
-    let T = W * Sigma;
-    let covView = T * transpose(W);
-
-    // project to 2D
-    let viewPos = uniforms.viewMatrix * vec4f(instancePosition, 1.0);
-    let z = -viewPos.z;
-    let focal = uniforms.projectionMatrix[0][0] * 0.5;
-
-    // 2D covariance matrix elements
-    let a = covView[0][0];
-    let b = covView[0][1];
-    let c = covView[1][1];
-
-    var det = a * c - b * b;
-    if (det == 0.0) {
-      det = 1e-6;
-    }
-
-    // inverse of 2D covariance
-    let invDet = 1.0 / det;
-    output.conic = vec3f(c * invDet, -b * invDet, a * invDet);
-
-    // compute extent of the 2D Gaussian (3 sigma)
-    let mid = 0.5 * (a + c);
-    let discriminant = sqrt(max(0.0, mid * mid - det));
-    let lambda1 = mid + discriminant;
-    let lambda2 = mid - discriminant;
-    let radius = 3.0 * sqrt(max(lambda1, lambda2));
-
-    // scale quad vertices by the radius
-    let scaledVertex = position.xy * radius * 2.0;
-
-    // transform to screen space
-    let clipPos = uniforms.projectionMatrix * vec4f(viewPos.xyz + vec3f(scaledVertex / focal, 0.0), 1.0);
-    output.position = clipPos;
-
     output.color = instanceColor;
     output.opacity = instanceOpacity;
     output.uv = position.xy;
+
+    // Simple identity conic (circular Gaussian)
+    output.conic = vec3f(1.0, 0.0, 1.0);
+
+    // Apply instance scale to quad vertex
+    let scaledPos = position * instanceScale;
+
+    // Transform to world space
+    let worldPos = vec4f(instancePosition + scaledPos, 1.0);
+
+    // Transform to clip space
+    output.position = uniforms.projectionMatrix * uniforms.viewMatrix * worldPos;
 
     return output;
   }

@@ -352,7 +352,7 @@ export class WebGPURenderer implements Renderer {
           obj.needsBufferUpdate = false;
         }
 
-        // uniform data: only view and projection matrices (32 floats)
+        // uniform data: view and projection matrices (32 floats)
         const uniformData = new Float32Array(32);
         uniformData.set(camera.viewMatrix, 0);
         uniformData.set(camera.projectionMatrix, 16);
