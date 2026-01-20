@@ -49,10 +49,10 @@ async function main() {
   const renderer = await createRenderer(canvas);
   const scene = new Scene();
   const camera = new Camera(canvas.width / canvas.height);
-  
+
 
   setupCanvas(canvas, camera, renderer);
-  new CameraControl(camera, canvas);
+  new CameraControl(camera, canvas, 25);
 
 
 

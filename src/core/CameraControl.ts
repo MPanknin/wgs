@@ -5,14 +5,16 @@ export class CameraControl {
   private isPanning = false;
   private lastX = 0;
   private lastY = 0;
-  private distance = 5;
+  private distance: number;
   private theta = 0; // horizontal rotation
   private phi = 0; // vertical rotation
 
   constructor(
     private camera: Camera,
-    private element: HTMLElement
+    private element: HTMLElement,
+    distance = 5
   ) {
+    this.distance = distance;
     this.updateCameraPosition();
     this.setupEventListeners();
   }
