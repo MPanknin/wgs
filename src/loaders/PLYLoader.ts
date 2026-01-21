@@ -183,11 +183,13 @@ export class PLYLoader {
       const py = ((packedPos >>> 10) & 0x7FF) / 2047.0;
       const pz = (packedPos & 0x3FF) / 1023.0;
 
-      const position: [number, number, number] = [
+      let position: [number, number, number] = [
         chunk.minX + px * (chunk.maxX - chunk.minX),
         chunk.minY + py * (chunk.maxY - chunk.minY),
         chunk.minZ + pz * (chunk.maxZ - chunk.minZ),
       ];
+
+      position = [-position[0], -position[1], position[2]];
 
       // Unpack rotation (quaternion from packed uint32)
       const packedRot = vertex[1]!;
@@ -202,6 +204,9 @@ export class PLYLoader {
       else if (largestComponent === 1) rotation = [qa, qd, qb, qc];
       else if (largestComponent === 2) rotation = [qa, qb, qd, qc];
       else rotation = [qa, qb, qc, qd];
+
+      const rx = rotation[0], ry = rotation[1], rz = rotation[2], rw = rotation[3];
+      rotation = [-rz, rw, rx, -ry];
 
       // Unpack scale
       const packedScale = vertex[2]!;
