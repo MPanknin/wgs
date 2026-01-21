@@ -72,6 +72,7 @@ export const vertexShaderWebGLInstanced = `
   varying float vOpacity;
   varying vec2 vUv;
   varying vec3 vConic;
+  varying vec2 vCenter;
 
   // transpose a 3x3 matrix
   mat3 transpose3(mat3 m) {
@@ -101,7 +102,6 @@ export const vertexShaderWebGLInstanced = `
   void main() {
     vColor = instanceColor;
     vOpacity = instanceOpacity;
-    vUv = position.xy;
 
     // Build rotation matrix from quaternion
     mat3 R = quatToMat3(instanceRotation);
@@ -161,9 +161,17 @@ export const vertexShaderWebGLInstanced = `
     vec2 majorAxis = min(3.0 * sqrt(lambda1), 1024.0) * v1;
     vec2 minorAxis = min(3.0 * sqrt(lambda2), 1024.0) * v2;
 
+    // Pass pixel-space UV to fragment shader
+    // position.xy is -0.5 to 0.5, scale by axes to get pixel offset
+    vUv = position.x * majorAxis + position.y * minorAxis;
+
     // Project center to clip space
     vec4 clipCenter = projectionMatrix * viewCenter;
     vec2 ndcCenter = clipCenter.xy / clipCenter.w;
+
+    // Convert NDC center to pixel coordinates for fragment shader
+    // Both NDC and gl_FragCoord have origin at bottom-left in WebGL
+    vCenter = (ndcCenter * 0.5 + 0.5) * viewport;
 
     // Position quad corner in NDC space
     // Convert from pixel space to NDC space (NDC spans -1 to 1, so divide by viewport/2)
@@ -176,25 +184,32 @@ export const vertexShaderWebGLInstanced = `
 
 export const fragmentShaderWebGLInstanced = `
   precision highp float;
+
+  uniform vec2 viewport;
+
   varying vec3 vColor;
   varying float vOpacity;
   varying vec2 vUv;
   varying vec3 vConic;
+  varying vec2 vCenter; // splat center in pixel space
 
   void main() {
-    // vUv is in -0.5..0.5, scale to -1..1
-    vec2 d = vUv * 2.0;
+    // Compute pixel-space distance from fragment to splat center
+    // gl_FragCoord and vCenter both use bottom-left origin, so direct subtraction
+    vec2 d = gl_FragCoord.xy - vCenter;
 
     // evaluate 2D Gaussian using the conic (inverse covariance)
-    // power = d^T * Sigma^-1 * d = A*x^2 + 2*B*xy + C*y^2
-    float power = vConic.x * d.x * d.x + 2.0 * vConic.y * d.x * d.y + vConic.z * d.y * d.y;
+    // power = -0.5 * d^T * Sigma^-1 * d
+    float power = -0.5 * (vConic.x * d.x * d.x + vConic.z * d.y * d.y) - vConic.y * d.x * d.y;
+
+    // Early discard for out of bounds
+    if (power > 0.0) discard;
 
     // gaussian falloff
-    float gaussian = exp(-0.5 * power);
-    float alpha = gaussian * vOpacity;
+    float alpha = min(0.99, vOpacity * exp(power));
 
     // discard low alpha fragments
-    if (alpha < 0.01) discard;
+    if (alpha < 1.0 / 255.0) discard;
 
     gl_FragColor = vec4(vColor, alpha);
   }
@@ -213,6 +228,7 @@ export const vertexShaderWebGPUInstanced = `
     @location(1) opacity: f32,
     @location(2) uv: vec2f,
     @location(3) conic: vec3f,
+    @location(4) center: vec2f,
   }
 
   @group(0) @binding(0) var<uniform> uniforms: Uniforms;
@@ -257,7 +273,6 @@ export const vertexShaderWebGPUInstanced = `
 
     output.color = instanceColor;
     output.opacity = instanceOpacity;
-    output.uv = position.xy;
 
     // Build rotation matrix from quaternion
     let R = quatToMat3(instanceRotation);
@@ -317,9 +332,21 @@ export const vertexShaderWebGPUInstanced = `
     let majorAxis = min(3.0 * sqrt(lambda1), 1024.0) * v1;
     let minorAxis = min(3.0 * sqrt(lambda2), 1024.0) * v2;
 
+    // Pass pixel-space UV to fragment shader
+    // position.xy is -0.5 to 0.5, scale by axes to get pixel offset
+    output.uv = position.x * majorAxis + position.y * minorAxis;
+
     // Project center to clip space
     let clipCenter = uniforms.projectionMatrix * viewCenter;
     let ndcCenter = clipCenter.xy / clipCenter.w;
+
+    // Convert NDC center to pixel coordinates for fragment shader
+    // WebGPU fragCoord has origin at top-left, but NDC has Y increasing upward
+    // So we need to flip Y: NDC +1 (top) -> pixel 0 (top), NDC -1 (bottom) -> pixel viewport.y (bottom)
+    output.center = vec2f(
+      (ndcCenter.x * 0.5 + 0.5) * uniforms.viewport.x,
+      (1.0 - (ndcCenter.y * 0.5 + 0.5)) * uniforms.viewport.y
+    );
 
     // Position quad corner in NDC space
     // Convert from pixel space to NDC space (NDC spans -1 to 1, so divide by viewport/2)
@@ -335,24 +362,30 @@ export const vertexShaderWebGPUInstanced = `
 export const fragmentShaderWebGPUInstanced = `
   @fragment
   fn fragmentMain(
+    @builtin(position) fragCoord: vec4f,
     @location(0) color: vec3f,
     @location(1) opacity: f32,
     @location(2) uv: vec2f,
-    @location(3) conic: vec3f
+    @location(3) conic: vec3f,
+    @location(4) center: vec2f
   ) -> @location(0) vec4f {
-    // uv is in -0.5..0.5, scale to -1..1
-    let d = uv * 2.0;
+    // Compute pixel-space distance from fragment to splat center
+    let d = fragCoord.xy - center;
 
     // evaluate 2D Gaussian using the conic (inverse covariance)
-    // power = d^T * Sigma^-1 * d = A*x^2 + 2*B*xy + C*y^2
-    let power = conic.x * d.x * d.x + 2.0 * conic.y * d.x * d.y + conic.z * d.y * d.y;
+    // power = -0.5 * d^T * Sigma^-1 * d
+    let power = -0.5 * (conic.x * d.x * d.x + conic.z * d.y * d.y) - conic.y * d.x * d.y;
+
+    // Early discard for out of bounds
+    if (power > 0.0) {
+      discard;
+    }
 
     // gaussian falloff
-    let gaussian = exp(-0.5 * power);
-    let alpha = gaussian * opacity;
+    let alpha = min(0.99, opacity * exp(power));
 
     // discard low alpha fragments
-    if (alpha < 0.01) {
+    if (alpha < 1.0 / 255.0) {
       discard;
     }
 
