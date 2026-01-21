@@ -47,7 +47,6 @@ export class WebGLRenderer implements Renderer {
 
     gl.enable(gl.DEPTH_TEST);
     gl.depthFunc(gl.LEQUAL);
-    gl.depthMask(false);
 
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
@@ -216,14 +215,19 @@ export class WebGLRenderer implements Renderer {
 
         gl.useProgram(shader.program);
 
-        if (shader.modelMatrixLocation) {
-          gl.uniformMatrix4fv(shader.modelMatrixLocation, false, obj.worldMatrix);
-        }
         if (shader.viewMatrixLocation) {
           gl.uniformMatrix4fv(shader.viewMatrixLocation, false, camera.viewMatrix);
         }
         if (shader.projectionMatrixLocation) {
           gl.uniformMatrix4fv(shader.projectionMatrixLocation, false, camera.projectionMatrix);
+        }
+
+        // viewport uniform for instanced shaders
+        const viewportLocation = gl.getUniformLocation(shader.program, 'viewport');
+        if (viewportLocation) {
+          const vw = gl.drawingBufferWidth;
+          const vh = gl.drawingBufferHeight;
+          gl.uniform2f(viewportLocation, vw, vh);
         }
 
         gl.bindBuffer(gl.ARRAY_BUFFER, meshResources.vertexBuffer);
@@ -271,6 +275,9 @@ export class WebGLRenderer implements Renderer {
           this.instancedExt.vertexAttribDivisorANGLE(instanceOpacityLoc, 1);
         }
 
+        // disable depth writes for proper alpha blending of splats
+        gl.depthMask(false);
+
         // draw
         if (meshResources.indexBuffer && meshResources.indexCount) {
           gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshResources.indexBuffer);
@@ -295,6 +302,9 @@ export class WebGLRenderer implements Renderer {
         if (instanceScaleLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceScaleLoc, 0);
         if (instanceColorLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceColorLoc, 0);
         if (instanceOpacityLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceOpacityLoc, 0);
+
+        // re-enable depth writes
+        gl.depthMask(true);
 
       } else if (obj instanceof Mesh) {
         
@@ -343,8 +353,10 @@ export class WebGLRenderer implements Renderer {
   }
 
   clear(r: number, g: number, b: number, a: number): void {
-    this.gl.clearColor(r, g, b, a);
-    this.gl.clear(this.gl.COLOR_BUFFER_BIT | this.gl.DEPTH_BUFFER_BIT);
+    const { gl } = this;
+    gl.clearColor(r, g, b, a);
+    gl.depthMask(true); // ensure depth buffer can be cleared
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
   }
 
   resize(width: number, height: number): void {

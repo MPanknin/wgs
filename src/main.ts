@@ -77,8 +77,8 @@ async function main() {
   try {
     const splats = await loader.load('/models/banana.compressed.ply');
 
-    const scaleFactor = 0.01;
-    const maxSplats = Math.min(splats.length, 250000); 
+    const scaleFactor = 1.0;
+    const maxSplats = Math.min(splats.length, 200000); 
 
     const instancedShader = new Shader({
       vertex: config.backend === 'webgpu' ? vertexShaderWebGPUInstanced : vertexShaderWebGLInstanced,

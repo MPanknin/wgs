@@ -66,6 +66,7 @@ export const vertexShaderWebGLInstanced = `
 
   uniform mat4 viewMatrix;
   uniform mat4 projectionMatrix;
+  uniform vec2 viewport;
 
   varying vec3 vColor;
   varying float vOpacity;
@@ -102,22 +103,79 @@ export const vertexShaderWebGLInstanced = `
     vOpacity = instanceOpacity;
     vUv = position.xy;
 
-    // Simple identity conic (circular Gaussian)
-    vConic = vec3(1.0, 0.0, 1.0);
+    // Build rotation matrix from quaternion
+    mat3 R = quatToMat3(instanceRotation);
 
-    // Apply instance scale to quad vertex
-    vec3 scaledPos = position * instanceScale;
+    // Build scale matrix
+    mat3 S = mat3(
+      instanceScale.x, 0.0, 0.0,
+      0.0, instanceScale.y, 0.0,
+      0.0, 0.0, instanceScale.z
+    );
 
-    // Transform to world space
-    vec4 worldPos = vec4(instancePosition + scaledPos, 1.0);
+    // Compute 3D covariance: Vrk = R * S * S^T * R^T
+    mat3 RS = R * S;
+    mat3 Vrk = RS * transpose3(RS);
 
-    // Transform to clip space
-    gl_Position = projectionMatrix * viewMatrix * worldPos;
+    // Transform splat center to view space
+    vec4 viewCenter = viewMatrix * vec4(instancePosition, 1.0);
+    vec3 cam = viewCenter.xyz;
+
+    // Jacobian of perspective projection
+    // Convert focal from NDC to pixel space
+    vec2 focal = vec2(
+      projectionMatrix[0][0] * viewport.x * 0.5,
+      projectionMatrix[1][1] * viewport.y * 0.5
+    );
+    mat3 J = mat3(
+      focal.x / cam.z, 0.0, -(focal.x * cam.x) / (cam.z * cam.z),
+      0.0, -focal.y / cam.z, (focal.y * cam.y) / (cam.z * cam.z),
+      0.0, 0.0, 0.0
+    );
+
+    // Transform to view space and project to 2D
+    mat3 W = mat3(viewMatrix[0].xyz, viewMatrix[1].xyz, viewMatrix[2].xyz);
+    mat3 T = W * J;
+    mat3 cov2d = transpose3(T) * Vrk * T;
+
+    // Add small epsilon for numerical stability
+    cov2d[0][0] += 0.3;
+    cov2d[1][1] += 0.3;
+
+    // Compute eigenvalues for 2D covariance
+    float mid = (cov2d[0][0] + cov2d[1][1]) / 2.0;
+    float radius = length(vec2((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
+    float lambda1 = mid + radius;
+    float lambda2 = max(mid - radius, 0.1);
+
+    // Eigenvectors
+    vec2 v1 = normalize(vec2(cov2d[0][1], lambda1 - cov2d[0][0]));
+    vec2 v2 = vec2(-v1.y, v1.x);
+
+    // Compute conic (inverse of 2D covariance) for fragment shader
+    float det = cov2d[0][0] * cov2d[1][1] - cov2d[0][1] * cov2d[0][1];
+    float invDet = 1.0 / det;
+    vConic = vec3(cov2d[1][1] * invDet, -cov2d[0][1] * invDet, cov2d[0][0] * invDet);
+
+    // Compute ellipse axes (3-sigma coverage for 99.7% of Gaussian)
+    vec2 majorAxis = min(3.0 * sqrt(lambda1), 1024.0) * v1;
+    vec2 minorAxis = min(3.0 * sqrt(lambda2), 1024.0) * v2;
+
+    // Project center to clip space
+    vec4 clipCenter = projectionMatrix * viewCenter;
+    vec2 ndcCenter = clipCenter.xy / clipCenter.w;
+
+    // Position quad corner in NDC space
+    // Convert from pixel space to NDC space (NDC spans -1 to 1, so divide by viewport/2)
+    vec2 ndcOffset = (position.x * majorAxis + position.y * minorAxis) / (viewport * 0.5);
+    vec2 ndcPos = ndcCenter + ndcOffset;
+
+    gl_Position = vec4(ndcPos * clipCenter.w, clipCenter.z, clipCenter.w);
   }
 `;
 
 export const fragmentShaderWebGLInstanced = `
-  precision mediump float;
+  precision highp float;
   varying vec3 vColor;
   varying float vOpacity;
   varying vec2 vUv;
@@ -146,6 +204,7 @@ export const vertexShaderWebGPUInstanced = `
   struct Uniforms {
     viewMatrix: mat4x4f,
     projectionMatrix: mat4x4f,
+    viewport: vec2f,
   }
 
   struct VertexOutput {
@@ -200,17 +259,74 @@ export const vertexShaderWebGPUInstanced = `
     output.opacity = instanceOpacity;
     output.uv = position.xy;
 
-    // Simple identity conic (circular Gaussian)
-    output.conic = vec3f(1.0, 0.0, 1.0);
+    // Build rotation matrix from quaternion
+    let R = quatToMat3(instanceRotation);
 
-    // Apply instance scale to quad vertex
-    let scaledPos = position * instanceScale;
+    // Build scale matrix
+    let S = mat3x3f(
+      instanceScale.x, 0.0, 0.0,
+      0.0, instanceScale.y, 0.0,
+      0.0, 0.0, instanceScale.z
+    );
 
-    // Transform to world space
-    let worldPos = vec4f(instancePosition + scaledPos, 1.0);
+    // Compute 3D covariance: Vrk = R * S * S^T * R^T
+    let RS = R * S;
+    let Vrk = RS * transpose(RS);
 
-    // Transform to clip space
-    output.position = uniforms.projectionMatrix * uniforms.viewMatrix * worldPos;
+    // Transform splat center to view space
+    let viewCenter = uniforms.viewMatrix * vec4f(instancePosition, 1.0);
+    let cam = viewCenter.xyz;
+
+    // Jacobian of perspective projection
+    // Convert focal from NDC to pixel space
+    let focal = vec2f(
+      uniforms.projectionMatrix[0][0] * uniforms.viewport.x * 0.5,
+      uniforms.projectionMatrix[1][1] * uniforms.viewport.y * 0.5
+    );
+    let J = mat3x3f(
+      focal.x / cam.z, 0.0, -(focal.x * cam.x) / (cam.z * cam.z),
+      0.0, -focal.y / cam.z, (focal.y * cam.y) / (cam.z * cam.z),
+      0.0, 0.0, 0.0
+    );
+
+    // Transform to view space and project to 2D
+    let W = mat3x3f(uniforms.viewMatrix[0].xyz, uniforms.viewMatrix[1].xyz, uniforms.viewMatrix[2].xyz);
+    let T = W * J;
+    var cov2d = transpose(T) * Vrk * T;
+
+    // Add small epsilon for numerical stability
+    cov2d[0][0] += 0.3;
+    cov2d[1][1] += 0.3;
+
+    // Compute eigenvalues for 2D covariance
+    let mid = (cov2d[0][0] + cov2d[1][1]) / 2.0;
+    let radius = length(vec2f((cov2d[0][0] - cov2d[1][1]) / 2.0, cov2d[0][1]));
+    let lambda1 = mid + radius;
+    let lambda2 = max(mid - radius, 0.1);
+
+    // Eigenvectors
+    let v1 = normalize(vec2f(cov2d[0][1], lambda1 - cov2d[0][0]));
+    let v2 = vec2f(-v1.y, v1.x);
+
+    // Compute conic (inverse of 2D covariance) for fragment shader
+    let det = cov2d[0][0] * cov2d[1][1] - cov2d[0][1] * cov2d[0][1];
+    let invDet = 1.0 / det;
+    output.conic = vec3f(cov2d[1][1] * invDet, -cov2d[0][1] * invDet, cov2d[0][0] * invDet);
+
+    // Compute ellipse axes (3-sigma coverage for 99.7% of Gaussian)
+    let majorAxis = min(3.0 * sqrt(lambda1), 1024.0) * v1;
+    let minorAxis = min(3.0 * sqrt(lambda2), 1024.0) * v2;
+
+    // Project center to clip space
+    let clipCenter = uniforms.projectionMatrix * viewCenter;
+    let ndcCenter = clipCenter.xy / clipCenter.w;
+
+    // Position quad corner in NDC space
+    // Convert from pixel space to NDC space (NDC spans -1 to 1, so divide by viewport/2)
+    let ndcOffset = (position.x * majorAxis + position.y * minorAxis) / (uniforms.viewport * 0.5);
+    let ndcPos = ndcCenter + ndcOffset;
+
+    output.position = vec4f(ndcPos * clipCenter.w, clipCenter.z, clipCenter.w);
 
     return output;
   }

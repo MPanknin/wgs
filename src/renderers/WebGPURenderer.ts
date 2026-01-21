@@ -275,7 +275,7 @@ export class WebGPURenderer implements Renderer {
     instanceBuffer.unmap();
 
     const uniformBuffer = this.device.createBuffer({
-      size: 128, // 2 mat4x4 matrices (view + projection = 128 bytes)
+      size: 144, // 2 mat4x4 matrices (128) + vec2 viewport (8) + padding (8) = 144 bytes
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
@@ -352,10 +352,12 @@ export class WebGPURenderer implements Renderer {
           obj.needsBufferUpdate = false;
         }
 
-        // uniform data: view and projection matrices (32 floats)
-        const uniformData = new Float32Array(32);
+        // uniform data: view matrix (16), projection matrix (16), viewport (2) = 34 floats
+        const uniformData = new Float32Array(36); // 36 for alignment (multiple of 4)
         uniformData.set(camera.viewMatrix, 0);
         uniformData.set(camera.projectionMatrix, 16);
+        uniformData[32] = this.canvas.width;
+        uniformData[33] = this.canvas.height;
 
         this.device.queue.writeBuffer(meshResources.uniformBuffer, 0, uniformData);
 

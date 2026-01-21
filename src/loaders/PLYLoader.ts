@@ -214,10 +214,15 @@ export class PLYLoader {
       const sy = ((packedScale >>> 10) & 0x7FF) / 2047.0;
       const sz = (packedScale & 0x3FF) / 1023.0;
 
+      // scales are stored in log space, need to exp() them
+      const logScaleX = chunk.minScaleX + sx * (chunk.maxScaleX - chunk.minScaleX);
+      const logScaleY = chunk.minScaleY + sy * (chunk.maxScaleY - chunk.minScaleY);
+      const logScaleZ = chunk.minScaleZ + sz * (chunk.maxScaleZ - chunk.minScaleZ);
+
       const scale: [number, number, number] = [
-        chunk.minScaleX + sx * (chunk.maxScaleX - chunk.minScaleX),
-        chunk.minScaleY + sy * (chunk.maxScaleY - chunk.minScaleY),
-        chunk.minScaleZ + sz * (chunk.maxScaleZ - chunk.minScaleZ),
+        Math.exp(logScaleX),
+        Math.exp(logScaleY),
+        Math.exp(logScaleZ),
       ];
 
       // Unpack color and opacity
