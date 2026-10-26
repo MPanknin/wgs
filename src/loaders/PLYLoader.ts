@@ -21,6 +21,17 @@ interface ChunkMetadata {
   maxB: number;
 }
 
+const CHUNK_SIZE = 256;
+
+// unpack 11/10/11 bit normalized values
+function unpack111011(value: number): [number, number, number] {
+  return [
+    ((value >>> 21) & 0x7FF) / 2047.0,
+    ((value >>> 11) & 0x3FF) / 1023.0,
+    (value & 0x7FF) / 2047.0,
+  ];
+}
+
 interface PLYHeader {
   chunkCount: number;
   vertexCount: number;
@@ -169,60 +180,54 @@ export class PLYLoader {
 
     for (let i = 0; i < vertices.length; i++) {
       const vertex = vertices[i];
-      const sh = shData[i];
-      if (!vertex || !sh) continue;
+      if (!vertex) continue;
 
-      // Determine which chunk this vertex belongs to
-      const chunkIndex = Math.floor(i / (vertices.length / chunks.length));
-      const chunk = chunks[Math.min(chunkIndex, chunks.length - 1)];
+      // splats are grouped in fixed chunks of 256
+      const chunk = chunks[Math.floor(i / CHUNK_SIZE)];
       if (!chunk) continue;
 
-      // Unpack position (normalized 0-1 to chunk bounds)
-      const packedPos = vertex[0]!;
-      const px = ((packedPos >>> 21) & 0x7FF) / 2047.0;
-      const py = ((packedPos >>> 10) & 0x7FF) / 2047.0;
-      const pz = (packedPos & 0x3FF) / 1023.0;
+      // Unpack position (11/10/11 bits, normalized to chunk bounds)
+      const [px, py, pz] = unpack111011(vertex[0]!);
 
-      let position: [number, number, number] = [
+      const position: [number, number, number] = [
         chunk.minX + px * (chunk.maxX - chunk.minX),
         chunk.minY + py * (chunk.maxY - chunk.minY),
         chunk.minZ + pz * (chunk.maxZ - chunk.minZ),
       ];
 
-      position = [-position[0], -position[1], position[2]];
+      // flip x/y (180° about z) to convert from the y-down capture convention
+      position[0] = -position[0];
+      position[1] = -position[1];
 
-      // Unpack rotation (quaternion from packed uint32)
+      // Unpack rotation: smallest-three encoding of quaternion (w, x, y, z).
+      // top 2 bits = index of the dropped (largest) component, others 10 bits each
       const packedRot = vertex[1]!;
-      const largestComponent = (packedRot >>> 30) & 0x3;
-      const qa = (((packedRot >>> 20) & 0x3FF) / 1023.0) * 2.0 - 1.0;
-      const qb = (((packedRot >>> 10) & 0x3FF) / 1023.0) * 2.0 - 1.0;
-      const qc = ((packedRot & 0x3FF) / 1023.0) * 2.0 - 1.0;
-      const qd = Math.sqrt(Math.max(0, 1.0 - qa * qa - qb * qb - qc * qc));
+      const norm = Math.SQRT2;
+      const qa = (((packedRot >>> 20) & 0x3FF) / 1023.0 - 0.5) * norm;
+      const qb = (((packedRot >>> 10) & 0x3FF) / 1023.0 - 0.5) * norm;
+      const qc = ((packedRot & 0x3FF) / 1023.0 - 0.5) * norm;
+      const qm = Math.sqrt(Math.max(0, 1.0 - qa * qa - qb * qb - qc * qc));
 
-      let rotation: [number, number, number, number];
-      if (largestComponent === 0) rotation = [qd, qa, qb, qc];
-      else if (largestComponent === 1) rotation = [qa, qd, qb, qc];
-      else if (largestComponent === 2) rotation = [qa, qb, qd, qc];
-      else rotation = [qa, qb, qc, qd];
+      let q: [number, number, number, number];
+      switch (packedRot >>> 30) {
+        case 0: q = [qm, qa, qb, qc]; break;
+        case 1: q = [qa, qm, qb, qc]; break;
+        case 2: q = [qa, qb, qm, qc]; break;
+        default: q = [qa, qb, qc, qm]; break;
+      }
+      const [qw, qx, qy, qz] = q;
 
-      const rx = rotation[0], ry = rotation[1], rz = rotation[2], rw = rotation[3];
-      rotation = [-rz, rw, rx, -ry];
+      // apply the same 180° z rotation as the position flip (qFlip * q),
+      // output as (x, y, z, w) for the shader
+      const rotation: [number, number, number, number] = [-qy, qx, qw, -qz];
 
-      // Unpack scale
-      const packedScale = vertex[2]!;
-      const sx = ((packedScale >>> 21) & 0x7FF) / 2047.0;
-      const sy = ((packedScale >>> 10) & 0x7FF) / 2047.0;
-      const sz = (packedScale & 0x3FF) / 1023.0;
-
-      // scales are stored in log space, need to exp() them
-      const logScaleX = chunk.minScaleX + sx * (chunk.maxScaleX - chunk.minScaleX);
-      const logScaleY = chunk.minScaleY + sy * (chunk.maxScaleY - chunk.minScaleY);
-      const logScaleZ = chunk.minScaleZ + sz * (chunk.maxScaleZ - chunk.minScaleZ);
+      // Unpack scale (11/10/11 bits, log space within chunk range)
+      const [sx, sy, sz] = unpack111011(vertex[2]!);
 
       const scale: [number, number, number] = [
-        Math.exp(logScaleX),
-        Math.exp(logScaleY),
-        Math.exp(logScaleZ),
+        Math.exp(chunk.minScaleX + sx * (chunk.maxScaleX - chunk.minScaleX)),
+        Math.exp(chunk.minScaleY + sy * (chunk.maxScaleY - chunk.minScaleY)),
+        Math.exp(chunk.minScaleZ + sz * (chunk.maxScaleZ - chunk.minScaleZ)),
       ];
 
       // Unpack color and opacity
@@ -238,10 +243,15 @@ export class PLYLoader {
         chunk.minB + cb * (chunk.maxB - chunk.minB),
       ];
 
-      // Convert SH from uchar to float
-      const shFloat = new Float32Array(45);
-      for (let j = 0; j < 45; j++) {
-        shFloat[j] = ((sh[j] || 0) / 255.0) * 2.0 - 1.0; // Normalize to -1 to 1
+      // Convert SH from uchar to float (quantized to [-4, 4])
+      let shFloat: Float32Array | undefined;
+      const sh = shData[i];
+      if (sh) {
+        shFloat = new Float32Array(45);
+        for (let j = 0; j < 45; j++) {
+          const v = sh[j]!;
+          shFloat[j] = v === 0 ? 0 : ((v + 0.5) / 256.0 - 0.5) * 8.0;
+        }
       }
 
       splats.push({
