@@ -37,9 +37,5 @@ lerna-debug.log*
 # Testing
 coverage/
 
-
-# Leftover generated volume bricks (old volume prototype)
-public/models/bricks/
-
 # Local Claude Code settings
 .claude/settings.local.json

@@ -5,19 +5,12 @@ import { Scene } from './core/Scene';
 import { Camera } from './core/Camera';
 import { CameraControl } from './core/CameraControl';
 import type { Renderer } from './core/Renderer';
-import {
-  Shader,
-  vertexShaderWebGPU,
-  vertexShaderWebGL,
-  fragmentShaderWebGPU,
-  fragmentShaderWebGL,
-} from './core/Shader';
 import { Material } from './core/Material';
-import { Mesh } from './core/Mesh';
 import { InstancedMesh } from './core/InstancedMesh';
-import { testCube, testCubeIndices, testQuad, testQuadIndices } from './data';
+import { testQuad, testQuadIndices } from './data';
 import { PLYLoader } from './loaders/PLYLoader';
 import {
+  Shader,
   vertexShaderWebGLInstanced,
   fragmentShaderWebGLInstanced,
   vertexShaderWebGPUInstanced,
@@ -59,19 +52,6 @@ async function main() {
 
   setupCanvas(canvas, camera, renderer);
   new CameraControl(camera, canvas, 5);
-
-
-
-  const shader = new Shader({
-    vertex: config.backend === 'webgpu' ? vertexShaderWebGPU : vertexShaderWebGL,
-    fragment: config.backend === 'webgpu' ? fragmentShaderWebGPU : fragmentShaderWebGL,
-  });  
-
-  const matBlue = new Material({
-    shader,
-    color: [0.2, 0.6, 1.0],
-    opacity: 0.5,
-  });
 
   const loader = new PLYLoader();
   try {
@@ -121,16 +101,6 @@ async function main() {
   } catch (error) {
     console.error('Failed to load PLY file:', error);
   }
-
-  const mesh1 = new Mesh({
-    vertices: testCube,
-    indices: testCubeIndices,
-    material: matBlue,
-  });
-  mesh1.position = [0, 0, -5];
-  mesh1.markMatrixDirty();
-
-  // scene.add(mesh1);
 
   function animate() {
     renderer.clear(0.5, 0.5, 0.5, 1);
