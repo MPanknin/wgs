@@ -6,6 +6,8 @@ A minimal Gaussian splatting renderer for WebGL and WebGPU.
 > pipeline end to end, not to be a production renderer. It deliberately skips
 > optimizations (GPU sorting, spherical harmonics, culling, etc.).
 
+<img width="1561" height="829" alt="image" src="https://github.com/user-attachments/assets/4f6dc972-c54e-4382-9b9d-586fe05fca0d" />
+
 ## Pipeline
 
 1. **Load** – `src/loaders/PLYLoader.ts` decodes SuperSplat's compressed `.ply`
