@@ -1,4 +1,4 @@
-import { config } from './Config';
+import { config } from './config';
 import { WebGLRenderer } from './renderers/WebGLRenderer';
 import { WebGPURenderer } from './renderers/WebGPURenderer';
 import { Scene } from './core/Scene';
@@ -15,7 +15,7 @@ import {
 import { Material } from './core/Material';
 import { Mesh } from './core/Mesh';
 import { InstancedMesh } from './core/InstancedMesh';
-import { testCube, testCubeIndices, testQuad, testQuadIndices } from './Data';
+import { testCube, testCubeIndices, testQuad, testQuadIndices } from './data';
 import { PLYLoader } from './loaders/PLYLoader';
 import {
   vertexShaderWebGLInstanced,

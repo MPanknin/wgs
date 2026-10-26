@@ -78,9 +78,9 @@ export class InstancedMesh extends Object3D {
     const depths = new Float32Array(this.instanceCount);
     for (let i = 0; i < this.instanceCount; i++) {
       const offset = i * floatsPerInstance;
-      const px = this.instanceData[offset + 0];
-      const py = this.instanceData[offset + 1];
-      const pz = this.instanceData[offset + 2];
+      const px = this.instanceData[offset + 0]!;
+      const py = this.instanceData[offset + 1]!;
+      const pz = this.instanceData[offset + 2]!;
 
       const dx = px - cameraPosition[0];
       const dy = py - cameraPosition[1];
@@ -102,7 +102,7 @@ export class InstancedMesh extends Object3D {
       const dstOffset = i * floatsPerInstance;
 
       for (let j = 0; j < floatsPerInstance; j++) {
-        this.instanceData[dstOffset + j] = temp[srcOffset + j];
+        this.instanceData[dstOffset + j] = temp[srcOffset + j]!;
       }
     }
 

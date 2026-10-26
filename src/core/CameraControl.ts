@@ -87,7 +87,7 @@ export class CameraControl {
       const dirNormZ = dirZ / dirLen;
 
       // calculate right vector (cross product of direction and world up)
-      const worldUp = [0, 1, 0];
+      const worldUp = [0, 1, 0] as const;
       const rightX = dirNormY * worldUp[2] - dirNormZ * worldUp[1];
       const rightY = dirNormZ * worldUp[0] - dirNormX * worldUp[2];
       const rightZ = dirNormX * worldUp[1] - dirNormY * worldUp[0];

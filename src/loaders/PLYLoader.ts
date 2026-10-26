@@ -1,4 +1,4 @@
-import type { GaussianSplat } from '../Data';
+import type { GaussianSplat } from '../data';
 
 interface ChunkMetadata {
   minX: number;
