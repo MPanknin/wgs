@@ -1,4 +1,4 @@
-import type { GaussianSplat } from '../data';
+import { createSplatData, rotateZ180, type SplatData } from '../core/SplatData';
 
 interface ChunkMetadata {
   minX: number;
@@ -39,37 +39,23 @@ interface PLYHeader {
   headerEndOffset: number;
 }
 
+// Reads SuperSplat's compressed .ply. Higher-order SH is skipped (not rendered yet).
 export class PLYLoader {
-  async load(url: string): Promise<GaussianSplat[]> {
+  async load(url: string): Promise<SplatData> {
     const response = await fetch(url);
+    if (!response.ok) throw new Error(`Failed to fetch ${url}: ${response.status}`);
     const arrayBuffer = await response.arrayBuffer();
 
-    // Parse header
     const header = this.parseHeader(arrayBuffer);
-    console.log('PLY Header:', header);
-
-    // Parse binary data
     let offset = header.headerEndOffset;
 
-    // Read chunk metadata
     const chunks = this.parseChunks(arrayBuffer, offset, header.chunkCount);
-    console.log(`Loaded ${chunks.length} chunks`);
     offset += header.chunkCount * 18 * 4; // 18 floats per chunk
 
-    // Read vertex data
-    const vertices = this.parseVertices(arrayBuffer, offset, header.vertexCount);
-    console.log(`Loaded ${vertices.length} vertices`);
-    offset += header.vertexCount * 4 * 4; // 4 uint32 per vertex
-
-    // Read SH data
-    const shData = this.parseSH(arrayBuffer, offset, header.shCount);
-    console.log(`Loaded ${shData.length} SH entries`);
-
-    // Unpack and combine data
-    const splats = this.unpackSplats(vertices, shData, chunks);
-    console.log(`Unpacked ${splats.length} splats`);
-
-    return splats;
+    const data = this.unpackVertices(arrayBuffer, offset, header.vertexCount, chunks);
+    rotateZ180(data);
+    console.log(`Loaded ${data.count} splats from ${url}`);
+    return data;
   }
 
   private parseHeader(arrayBuffer: ArrayBuffer): PLYHeader {
@@ -143,127 +129,70 @@ export class PLYLoader {
     return chunks;
   }
 
-  private parseVertices(arrayBuffer: ArrayBuffer, offset: number, count: number): Uint32Array[] {
-    const view = new DataView(arrayBuffer);
-    const vertices: Uint32Array[] = [];
-
-    for (let i = 0; i < count; i++) {
-      const vertexOffset = offset + i * 16; // 4 uint32 per vertex
-      vertices.push(new Uint32Array([
-        view.getUint32(vertexOffset + 0, true),  // packed_position
-        view.getUint32(vertexOffset + 4, true),  // packed_rotation
-        view.getUint32(vertexOffset + 8, true),  // packed_scale
-        view.getUint32(vertexOffset + 12, true), // packed_color
-      ]));
-    }
-
-    return vertices;
-  }
-
-  private parseSH(arrayBuffer: ArrayBuffer, offset: number, count: number): Uint8Array[] {
-    const shData: Uint8Array[] = [];
-
-    for (let i = 0; i < count; i++) {
-      const shOffset = offset + i * 45; // 45 uchar per SH entry
-      shData.push(new Uint8Array(arrayBuffer, shOffset, 45));
-    }
-
-    return shData;
-  }
-
-  private unpackSplats(
-    vertices: Uint32Array[],
-    shData: Uint8Array[],
+  private unpackVertices(
+    arrayBuffer: ArrayBuffer,
+    offset: number,
+    count: number,
     chunks: ChunkMetadata[]
-  ): GaussianSplat[] {
-    const splats: GaussianSplat[] = [];
+  ): SplatData {
+    const view = new DataView(arrayBuffer);
+    const data = createSplatData(count);
+    const { positions, rotations, scales, colors } = data;
 
-    for (let i = 0; i < vertices.length; i++) {
-      const vertex = vertices[i];
-      if (!vertex) continue;
-
+    for (let i = 0; i < count; i++) {
       // splats are grouped in fixed chunks of 256
       const chunk = chunks[Math.floor(i / CHUNK_SIZE)];
-      if (!chunk) continue;
+      if (!chunk) throw new Error(`Missing chunk for vertex ${i}`);
+
+      const vertexOffset = offset + i * 16; // 4 uint32 per vertex
+      const packedPosition = view.getUint32(vertexOffset, true);
+      const packedRotation = view.getUint32(vertexOffset + 4, true);
+      const packedScale = view.getUint32(vertexOffset + 8, true);
+      const packedColor = view.getUint32(vertexOffset + 12, true);
 
       // Unpack position (11/10/11 bits, normalized to chunk bounds)
-      const [px, py, pz] = unpack111011(vertex[0]!);
-
-      const position: [number, number, number] = [
-        chunk.minX + px * (chunk.maxX - chunk.minX),
-        chunk.minY + py * (chunk.maxY - chunk.minY),
-        chunk.minZ + pz * (chunk.maxZ - chunk.minZ),
-      ];
-
-      // flip x/y (180° about z) to convert from the y-down capture convention
-      position[0] = -position[0];
-      position[1] = -position[1];
+      const [px, py, pz] = unpack111011(packedPosition);
+      positions[i * 3] = chunk.minX + px * (chunk.maxX - chunk.minX);
+      positions[i * 3 + 1] = chunk.minY + py * (chunk.maxY - chunk.minY);
+      positions[i * 3 + 2] = chunk.minZ + pz * (chunk.maxZ - chunk.minZ);
 
       // Unpack rotation: smallest-three encoding of quaternion (w, x, y, z).
       // top 2 bits = index of the dropped (largest) component, others 10 bits each
-      const packedRot = vertex[1]!;
       const norm = Math.SQRT2;
-      const qa = (((packedRot >>> 20) & 0x3FF) / 1023.0 - 0.5) * norm;
-      const qb = (((packedRot >>> 10) & 0x3FF) / 1023.0 - 0.5) * norm;
-      const qc = ((packedRot & 0x3FF) / 1023.0 - 0.5) * norm;
+      const qa = (((packedRotation >>> 20) & 0x3FF) / 1023.0 - 0.5) * norm;
+      const qb = (((packedRotation >>> 10) & 0x3FF) / 1023.0 - 0.5) * norm;
+      const qc = ((packedRotation & 0x3FF) / 1023.0 - 0.5) * norm;
       const qm = Math.sqrt(Math.max(0, 1.0 - qa * qa - qb * qb - qc * qc));
 
       let q: [number, number, number, number];
-      switch (packedRot >>> 30) {
+      switch (packedRotation >>> 30) {
         case 0: q = [qm, qa, qb, qc]; break;
         case 1: q = [qa, qm, qb, qc]; break;
         case 2: q = [qa, qb, qm, qc]; break;
         default: q = [qa, qb, qc, qm]; break;
       }
-      const [qw, qx, qy, qz] = q;
-
-      // apply the same 180° z rotation as the position flip (qFlip * q),
-      // output as (x, y, z, w) for the shader
-      const rotation: [number, number, number, number] = [-qy, qx, qw, -qz];
+      // store as (x, y, z, w)
+      rotations[i * 4] = q[1];
+      rotations[i * 4 + 1] = q[2];
+      rotations[i * 4 + 2] = q[3];
+      rotations[i * 4 + 3] = q[0];
 
       // Unpack scale (11/10/11 bits, log space within chunk range)
-      const [sx, sy, sz] = unpack111011(vertex[2]!);
-
-      const scale: [number, number, number] = [
-        Math.exp(chunk.minScaleX + sx * (chunk.maxScaleX - chunk.minScaleX)),
-        Math.exp(chunk.minScaleY + sy * (chunk.maxScaleY - chunk.minScaleY)),
-        Math.exp(chunk.minScaleZ + sz * (chunk.maxScaleZ - chunk.minScaleZ)),
-      ];
+      const [sx, sy, sz] = unpack111011(packedScale);
+      scales[i * 3] = Math.exp(chunk.minScaleX + sx * (chunk.maxScaleX - chunk.minScaleX));
+      scales[i * 3 + 1] = Math.exp(chunk.minScaleY + sy * (chunk.maxScaleY - chunk.minScaleY));
+      scales[i * 3 + 2] = Math.exp(chunk.minScaleZ + sz * (chunk.maxScaleZ - chunk.minScaleZ));
 
       // Unpack color and opacity
-      const packedColor = vertex[3]!;
       const cr = ((packedColor >>> 24) & 0xFF) / 255.0;
       const cg = ((packedColor >>> 16) & 0xFF) / 255.0;
       const cb = ((packedColor >>> 8) & 0xFF) / 255.0;
-      const opacity = (packedColor & 0xFF) / 255.0;
-
-      const color: [number, number, number] = [
-        chunk.minR + cr * (chunk.maxR - chunk.minR),
-        chunk.minG + cg * (chunk.maxG - chunk.minG),
-        chunk.minB + cb * (chunk.maxB - chunk.minB),
-      ];
-
-      // Convert SH from uchar to float (quantized to [-4, 4])
-      let shFloat: Float32Array | undefined;
-      const sh = shData[i];
-      if (sh) {
-        shFloat = new Float32Array(45);
-        for (let j = 0; j < 45; j++) {
-          const v = sh[j]!;
-          shFloat[j] = v === 0 ? 0 : ((v + 0.5) / 256.0 - 0.5) * 8.0;
-        }
-      }
-
-      splats.push({
-        position,
-        rotation,
-        scale,
-        color,
-        opacity,
-        sh: shFloat,
-      });
+      colors[i * 4] = chunk.minR + cr * (chunk.maxR - chunk.minR);
+      colors[i * 4 + 1] = chunk.minG + cg * (chunk.maxG - chunk.minG);
+      colors[i * 4 + 2] = chunk.minB + cb * (chunk.maxB - chunk.minB);
+      colors[i * 4 + 3] = (packedColor & 0xFF) / 255.0;
     }
 
-    return splats;
+    return data;
   }
 }

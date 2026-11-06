@@ -2,6 +2,7 @@ export type RenderBackend = 'webgl' | 'webgpu';
 
 export interface Config {
   backend: RenderBackend;
+  model: string; // .ply, .sog or SOG meta.json
 }
 
 function getBackendFromURL(): RenderBackend {
@@ -24,4 +25,5 @@ function getBackendFromURL(): RenderBackend {
 
 export const config: Config = {
   backend: getBackendFromURL(),
+  model: new URLSearchParams(window.location.search).get('model') ?? '/models/banana.compressed.ply',
 };
