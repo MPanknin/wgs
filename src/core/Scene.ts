@@ -16,7 +16,7 @@ export class Scene extends Object3D {
     return meshes;
   }
 
-  private traverse(callback: (obj: Object3D) => void): void {
+  traverse(callback: (obj: Object3D) => void): void {
     callback(this);
     this.traverseChildren(this, callback);
   }

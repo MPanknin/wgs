@@ -3,7 +3,8 @@ import type { Scene } from '../core/Scene';
 import type { Camera } from '../core/Camera';
 import { Shader } from '../core/Shader';
 import { Mesh } from '../core/Mesh';
-import { InstancedMesh } from '../core/InstancedMesh';
+import { SplatMesh } from '../core/SplatMesh';
+import { splatVertexGLSL, splatFragmentGLSL } from '../core/SplatShaders';
 
 interface GLShaderResources {
   program: WebGLProgram;
@@ -22,26 +23,37 @@ interface GLMeshResources {
   indexCount?: number;
 }
 
-interface GLInstancedMeshResources extends GLMeshResources {
-  instanceBuffer: WebGLBuffer;
-  instanceCount: number;
+interface GLSplatProgram {
+  program: WebGLProgram;
+  splats: WebGLUniformLocation | null;
+  viewMatrix: WebGLUniformLocation | null;
+  projectionMatrix: WebGLUniformLocation | null;
+  viewport: WebGLUniformLocation | null;
+  invCovScale: WebGLUniformLocation | null;
 }
 
+interface GLSplatResources {
+  vao: WebGLVertexArrayObject;
+  texture: WebGLTexture;
+  orderBuffer: WebGLBuffer;
+}
+
+const SPLAT_INDEX_LOCATION = 0;
+const SPLAT_TEXTURE_WIDTH = 4096;
+
 export class WebGLRenderer implements Renderer {
-  private gl: WebGLRenderingContext;
+  private gl: WebGL2RenderingContext;
   private shaderResources = new WeakMap<Shader, GLShaderResources>();
   private meshResources = new WeakMap<Mesh, GLMeshResources>();
-  private instancedMeshResources = new WeakMap<InstancedMesh, GLInstancedMeshResources>();
-  private instancedExt: ANGLE_instanced_arrays | null = null;
+  private splatResources = new WeakMap<SplatMesh, GLSplatResources>();
+  private splatProgram: GLSplatProgram | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
-    const gl = canvas.getContext('webgl');
+    const gl = canvas.getContext('webgl2');
     if (!gl) {
-      throw new Error('WebGL not supported');
+      throw new Error('WebGL2 not supported');
     }
     this.gl = gl;
-
-    this.instancedExt = gl.getExtension('ANGLE_instanced_arrays');
 
     gl.viewport(0, 0, canvas.width, canvas.height);
 
@@ -49,7 +61,8 @@ export class WebGLRenderer implements Renderer {
     gl.depthFunc(gl.LEQUAL);
 
     gl.enable(gl.BLEND);
-    gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
+    // same as WebGPU: keep destination alpha at 1 so the canvas stays opaque
+    gl.blendFuncSeparate(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA, gl.ONE, gl.ONE_MINUS_SRC_ALPHA);
   }
 
   private getOrCreateShaderResources(shader: Shader): GLShaderResources {
@@ -142,46 +155,118 @@ export class WebGLRenderer implements Renderer {
     return resources;
   }
 
-  private getOrCreateInstancedMeshResources(mesh: InstancedMesh): GLInstancedMeshResources {
-    let resources = this.instancedMeshResources.get(mesh);
+  private compileShader(type: number, source: string): WebGLShader {
+    const { gl } = this;
+    const shader = gl.createShader(type);
+    if (!shader) throw new Error('Failed to create shader');
+    gl.shaderSource(shader, source);
+    gl.compileShader(shader);
+    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
+      throw new Error('Shader compile error: ' + gl.getShaderInfoLog(shader));
+    }
+    return shader;
+  }
+
+  private getOrCreateSplatProgram(): GLSplatProgram {
+    if (this.splatProgram) return this.splatProgram;
+
+    const { gl } = this;
+    const program = gl.createProgram();
+    if (!program) throw new Error('Failed to create program');
+    gl.attachShader(program, this.compileShader(gl.VERTEX_SHADER, splatVertexGLSL));
+    gl.attachShader(program, this.compileShader(gl.FRAGMENT_SHADER, splatFragmentGLSL));
+    gl.bindAttribLocation(program, SPLAT_INDEX_LOCATION, 'splatIndex');
+    gl.linkProgram(program);
+
+    if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
+      throw new Error('Program link error: ' + gl.getProgramInfoLog(program));
+    }
+
+    this.splatProgram = {
+      program,
+      splats: gl.getUniformLocation(program, 'splats'),
+      viewMatrix: gl.getUniformLocation(program, 'viewMatrix'),
+      projectionMatrix: gl.getUniformLocation(program, 'projectionMatrix'),
+      viewport: gl.getUniformLocation(program, 'viewport'),
+      invCovScale: gl.getUniformLocation(program, 'invCovScale'),
+    };
+    return this.splatProgram;
+  }
+
+  private getOrCreateSplatResources(mesh: SplatMesh): GLSplatResources {
+    let resources = this.splatResources.get(mesh);
     if (resources) return resources;
 
     const { gl } = this;
 
-    const vertexBuffer = gl.createBuffer();
-    if (!vertexBuffer) throw new Error('Failed to create vertex buffer');
-    gl.bindBuffer(gl.ARRAY_BUFFER, vertexBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, mesh.vertices, gl.STATIC_DRAW);
+    // packed splats as RGBA32UI, 2 texels per splat; even width keeps a splat in one row
+    const maxSize = gl.getParameter(gl.MAX_TEXTURE_SIZE) as number;
+    const width = Math.min(SPLAT_TEXTURE_WIDTH, maxSize) & ~1;
+    const height = Math.max(1, Math.ceil((mesh.count * 2) / width));
+    if (height > maxSize) {
+      throw new Error(`${mesh.count} splats exceed the max texture size ${maxSize}`);
+    }
+    const texels = new Uint32Array(width * height * 4);
+    texels.set(mesh.packed);
 
-    let indexBuffer: WebGLBuffer | undefined;
-    let indexCount: number | undefined;
+    const texture = gl.createTexture();
+    if (!texture) throw new Error('Failed to create splat texture');
+    gl.bindTexture(gl.TEXTURE_2D, texture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    gl.texStorage2D(gl.TEXTURE_2D, 1, gl.RGBA32UI, width, height);
+    gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, width, height, gl.RGBA_INTEGER, gl.UNSIGNED_INT, texels);
 
-    if (mesh.indices) {
-      indexBuffer = gl.createBuffer();
-      if (!indexBuffer) throw new Error('Failed to create index buffer');
-      gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, indexBuffer);
-      gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, mesh.indices, gl.STATIC_DRAW);
-      indexCount = mesh.indices.length;
+    // sorted splat indices, one per instance
+    const vao = gl.createVertexArray();
+    const orderBuffer = gl.createBuffer();
+    if (!vao || !orderBuffer) throw new Error('Failed to create splat order buffer');
+    gl.bindVertexArray(vao);
+    gl.bindBuffer(gl.ARRAY_BUFFER, orderBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, mesh.order, gl.DYNAMIC_DRAW);
+    gl.enableVertexAttribArray(SPLAT_INDEX_LOCATION);
+    gl.vertexAttribIPointer(SPLAT_INDEX_LOCATION, 1, gl.UNSIGNED_INT, 0, 0);
+    gl.vertexAttribDivisor(SPLAT_INDEX_LOCATION, 1);
+    gl.bindVertexArray(null);
+    mesh.needsOrderUpload = false;
+
+    resources = { vao, texture, orderBuffer };
+    this.splatResources.set(mesh, resources);
+    return resources;
+  }
+
+  private renderSplats(mesh: SplatMesh, camera: Camera): void {
+    if (mesh.count === 0) return;
+
+    const { gl } = this;
+
+    mesh.sort(camera.position);
+
+    const program = this.getOrCreateSplatProgram();
+    const resources = this.getOrCreateSplatResources(mesh);
+
+    if (mesh.needsOrderUpload) {
+      gl.bindBuffer(gl.ARRAY_BUFFER, resources.orderBuffer);
+      gl.bufferSubData(gl.ARRAY_BUFFER, 0, mesh.order);
+      mesh.needsOrderUpload = false;
     }
 
-    const vertexCount = mesh.vertices.length / 3;
+    gl.useProgram(program.program);
+    gl.uniformMatrix4fv(program.viewMatrix, false, camera.viewMatrix);
+    gl.uniformMatrix4fv(program.projectionMatrix, false, camera.projectionMatrix);
+    gl.uniform2f(program.viewport, gl.drawingBufferWidth, gl.drawingBufferHeight);
+    gl.uniform1f(program.invCovScale, 1 / mesh.covScale);
 
-    const instanceBuffer = gl.createBuffer();
-    if (!instanceBuffer) throw new Error('Failed to create instance buffer');
-    gl.bindBuffer(gl.ARRAY_BUFFER, instanceBuffer);
-    gl.bufferData(gl.ARRAY_BUFFER, mesh.instanceData, gl.DYNAMIC_DRAW);
+    gl.activeTexture(gl.TEXTURE0);
+    gl.bindTexture(gl.TEXTURE_2D, resources.texture);
+    gl.uniform1i(program.splats, 0);
 
-    resources = {
-      vertexBuffer,
-      indexBuffer,
-      vertexCount,
-      indexCount,
-      instanceBuffer,
-      instanceCount: mesh.instanceCount,
-    };
-
-    this.instancedMeshResources.set(mesh, resources);
-    return resources;
+    // splats are alpha blended back to front, no depth writes
+    gl.depthMask(false);
+    gl.bindVertexArray(resources.vao);
+    gl.drawArraysInstanced(gl.TRIANGLE_STRIP, 0, 4, mesh.count);
+    gl.bindVertexArray(null);
+    gl.depthMask(true);
   }
 
   render(scene: Scene, camera: Camera): void {
@@ -193,120 +278,7 @@ export class WebGLRenderer implements Renderer {
 
     for (const obj of objects) {
 
-      if (obj instanceof InstancedMesh) {
-        if (!obj.material?.shader || !this.instancedExt) {
-          continue;
-        }
-        // todo: this needs to be exclusie only for splat meshes
-        // sort instances if camera moved
-        if (obj.shouldSort(camera.position)) {
-          obj.sortInstances(camera.position);
-        }
-
-        const shader = this.getOrCreateShaderResources(obj.material.shader);
-        const meshResources = this.getOrCreateInstancedMeshResources(obj);
-
-        // re-upload instance buffer if it was sorted
-        if (obj.needsBufferUpdate) {
-          gl.bindBuffer(gl.ARRAY_BUFFER, meshResources.instanceBuffer);
-          gl.bufferSubData(gl.ARRAY_BUFFER, 0, obj.instanceData);
-          obj.needsBufferUpdate = false;
-        }
-
-        gl.useProgram(shader.program);
-
-        if (shader.viewMatrixLocation) {
-          gl.uniformMatrix4fv(shader.viewMatrixLocation, false, camera.viewMatrix);
-        }
-        if (shader.projectionMatrixLocation) {
-          gl.uniformMatrix4fv(shader.projectionMatrixLocation, false, camera.projectionMatrix);
-        }
-
-        // viewport uniform for instanced shaders
-        const viewportLocation = gl.getUniformLocation(shader.program, 'viewport');
-        if (viewportLocation) {
-          const vw = gl.drawingBufferWidth;
-          const vh = gl.drawingBufferHeight;
-          gl.uniform2f(viewportLocation, vw, vh);
-        }
-
-        gl.bindBuffer(gl.ARRAY_BUFFER, meshResources.vertexBuffer);
-        gl.enableVertexAttribArray(shader.positionLocation);
-        gl.vertexAttribPointer(shader.positionLocation, 3, gl.FLOAT, false, 0, 0);
-
-        // bind instance buffer
-        gl.bindBuffer(gl.ARRAY_BUFFER, meshResources.instanceBuffer);
-
-        // instance attributes (14 floats per instance: pos:3, rot:4, scale:3, color:3, opacity:1)
-        const stride = 14 * 4; // 14 floats * 4 bytes
-
-        const instancePosLoc = gl.getAttribLocation(shader.program, 'instancePosition');
-        if (instancePosLoc !== -1) {
-          gl.enableVertexAttribArray(instancePosLoc);
-          gl.vertexAttribPointer(instancePosLoc, 3, gl.FLOAT, false, stride, 0);
-          this.instancedExt.vertexAttribDivisorANGLE(instancePosLoc, 1);
-        }
-
-        const instanceRotLoc = gl.getAttribLocation(shader.program, 'instanceRotation');
-        if (instanceRotLoc !== -1) {
-          gl.enableVertexAttribArray(instanceRotLoc);
-          gl.vertexAttribPointer(instanceRotLoc, 4, gl.FLOAT, false, stride, 12);
-          this.instancedExt.vertexAttribDivisorANGLE(instanceRotLoc, 1);
-        }
-
-        const instanceScaleLoc = gl.getAttribLocation(shader.program, 'instanceScale');
-        if (instanceScaleLoc !== -1) {
-          gl.enableVertexAttribArray(instanceScaleLoc);
-          gl.vertexAttribPointer(instanceScaleLoc, 3, gl.FLOAT, false, stride, 28);
-          this.instancedExt.vertexAttribDivisorANGLE(instanceScaleLoc, 1);
-        }
-
-        const instanceColorLoc = gl.getAttribLocation(shader.program, 'instanceColor');
-        if (instanceColorLoc !== -1) {
-          gl.enableVertexAttribArray(instanceColorLoc);
-          gl.vertexAttribPointer(instanceColorLoc, 3, gl.FLOAT, false, stride, 40);
-          this.instancedExt.vertexAttribDivisorANGLE(instanceColorLoc, 1);
-        }
-
-        const instanceOpacityLoc = gl.getAttribLocation(shader.program, 'instanceOpacity');
-        if (instanceOpacityLoc !== -1) {
-          gl.enableVertexAttribArray(instanceOpacityLoc);
-          gl.vertexAttribPointer(instanceOpacityLoc, 1, gl.FLOAT, false, stride, 52);
-          this.instancedExt.vertexAttribDivisorANGLE(instanceOpacityLoc, 1);
-        }
-
-        // disable depth writes for proper alpha blending of splats
-        gl.depthMask(false);
-
-        // draw
-        if (meshResources.indexBuffer && meshResources.indexCount) {
-          gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, meshResources.indexBuffer);
-          this.instancedExt.drawElementsInstancedANGLE(
-            gl.TRIANGLES,
-            meshResources.indexCount,
-            gl.UNSIGNED_SHORT,
-            0,
-            meshResources.instanceCount
-          );
-        } else {
-          this.instancedExt.drawArraysInstancedANGLE(
-            gl.TRIANGLES,
-            0,
-            meshResources.vertexCount,
-            meshResources.instanceCount
-          );
-        }
-
-        if (instancePosLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instancePosLoc, 0);
-        if (instanceRotLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceRotLoc, 0);
-        if (instanceScaleLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceScaleLoc, 0);
-        if (instanceColorLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceColorLoc, 0);
-        if (instanceOpacityLoc !== -1) this.instancedExt.vertexAttribDivisorANGLE(instanceOpacityLoc, 0);
-
-        // re-enable depth writes
-        gl.depthMask(true);
-
-      } else if (obj instanceof Mesh) {
+      if (obj instanceof Mesh) {
         
         if (!obj.material?.shader) {
           continue;
@@ -350,6 +322,11 @@ export class WebGLRenderer implements Renderer {
         }
       }
     }
+
+    // splats last, blended over the opaque meshes
+    scene.traverse((obj) => {
+      if (obj instanceof SplatMesh) this.renderSplats(obj, camera);
+    });
   }
 
   clear(r: number, g: number, b: number, a: number): void {

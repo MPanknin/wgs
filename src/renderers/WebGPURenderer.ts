@@ -3,7 +3,8 @@ import type { Scene } from '../core/Scene';
 import type { Camera } from '../core/Camera';
 import { Shader } from '../core/Shader';
 import { Mesh } from '../core/Mesh';
-import { InstancedMesh } from '../core/InstancedMesh';
+import { SplatMesh } from '../core/SplatMesh';
+import { splatWGSL } from '../core/SplatShaders';
 
 interface GPUShaderResources {
   pipeline: GPURenderPipeline;
@@ -18,13 +19,9 @@ interface GPUMeshResources {
   bindGroup: GPUBindGroup;
 }
 
-interface GPUInstancedMeshResources {
-  vertexBuffer: GPUBuffer;
-  indexBuffer?: GPUBuffer;
-  vertexCount: number;
-  indexCount?: number;
-  instanceBuffer: GPUBuffer;
-  instanceCount: number;
+interface GPUSplatResources {
+  splatBuffer: GPUBuffer;
+  orderBuffer: GPUBuffer;
   uniformBuffer: GPUBuffer;
   bindGroup: GPUBindGroup;
 }
@@ -36,7 +33,9 @@ export class WebGPURenderer implements Renderer {
   private depthTexture!: GPUTexture;
   private shaderResources = new WeakMap<Shader, GPUShaderResources>();
   private meshResources = new WeakMap<Mesh, GPUMeshResources>();
-  private instancedMeshResources = new WeakMap<InstancedMesh, GPUInstancedMeshResources>();
+  private splatResources = new WeakMap<SplatMesh, GPUSplatResources>();
+  private splatPipeline: GPURenderPipeline | null = null;
+  private splatUniforms = new Float32Array(36); // view (16), projection (16), viewport (2), invCovScale (1), pad
 
   constructor(private canvas: HTMLCanvasElement) {}
 
@@ -51,7 +50,13 @@ export class WebGPURenderer implements Renderer {
       throw new Error('Failed to get WebGPU adapter');
     }
 
-    this.device = await adapter.requestDevice();
+    // large scenes need big storage buffers (32 bytes per splat)
+    this.device = await adapter.requestDevice({
+      requiredLimits: {
+        maxStorageBufferBindingSize: adapter.limits.maxStorageBufferBindingSize,
+        maxBufferSize: adapter.limits.maxBufferSize,
+      },
+    });
 
     const context = this.canvas.getContext('webgpu');
     if (!context) {
@@ -84,9 +89,6 @@ export class WebGPURenderer implements Renderer {
       code: shader.vertex + '\n' + shader.fragment,
     });
 
-    // todo: this is ugly 
-    const isInstanced = shader.vertex.includes('instancePosition');
-
     const vertexBuffers: GPUVertexBufferLayout[] = [
       {
         arrayStride: 12, // 3 floats * 4 bytes (vertex position)
@@ -99,41 +101,6 @@ export class WebGPURenderer implements Renderer {
         ],
       },
     ];
-
-    if (isInstanced) {
-      // Add instance buffer layout
-      vertexBuffers.push({
-        arrayStride: 56, // 14 floats * 4 bytes (pos:3, rot:4, scale:3, color:3, opacity:1)
-        stepMode: 'instance',
-        attributes: [
-          {
-            shaderLocation: 1, // instancePosition
-            offset: 0,
-            format: 'float32x3',
-          },
-          {
-            shaderLocation: 2, // instanceRotation
-            offset: 12,
-            format: 'float32x4',
-          },
-          {
-            shaderLocation: 3, // instanceScale
-            offset: 28,
-            format: 'float32x3',
-          },
-          {
-            shaderLocation: 4, // instanceColor
-            offset: 40,
-            format: 'float32x3',
-          },
-          {
-            shaderLocation: 5, // instanceOpacity
-            offset: 52,
-            format: 'float32',
-          },
-        ],
-      });
-    }
 
     const pipeline = this.device.createRenderPipeline({
       layout: 'auto',
@@ -238,74 +205,117 @@ export class WebGPURenderer implements Renderer {
     return resources;
   }
 
-  private getOrCreateInstancedMeshResources(mesh: InstancedMesh, shader: Shader): GPUInstancedMeshResources {
-    let resources = this.instancedMeshResources.get(mesh);
+  private getOrCreateSplatPipeline(): GPURenderPipeline {
+    if (this.splatPipeline) return this.splatPipeline;
+
+    const module = this.device.createShaderModule({ code: splatWGSL });
+
+    // no vertex buffers: the shader pulls splats from storage buffers
+    this.splatPipeline = this.device.createRenderPipeline({
+      layout: 'auto',
+      vertex: {
+        module,
+        entryPoint: 'vertexMain',
+      },
+      fragment: {
+        module,
+        entryPoint: 'fragmentMain',
+        targets: [
+          {
+            format: this.format,
+            blend: {
+              color: {
+                srcFactor: 'src-alpha',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+              alpha: {
+                srcFactor: 'one',
+                dstFactor: 'one-minus-src-alpha',
+                operation: 'add',
+              },
+            },
+          },
+        ],
+      },
+      primitive: {
+        topology: 'triangle-strip',
+      },
+      depthStencil: {
+        depthWriteEnabled: false,
+        depthCompare: 'less',
+        format: 'depth24plus',
+      },
+    });
+    return this.splatPipeline;
+  }
+
+  private getOrCreateSplatResources(mesh: SplatMesh): GPUSplatResources {
+    let resources = this.splatResources.get(mesh);
     if (resources) return resources;
 
-    const vertexBuffer = this.device.createBuffer({
-      size: mesh.vertices.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
-      mappedAtCreation: true,
-    });
-    new Float32Array(vertexBuffer.getMappedRange()).set(mesh.vertices);
-    vertexBuffer.unmap();
-
-    let indexBuffer: GPUBuffer | undefined;
-    let indexCount: number | undefined;
-
-    if (mesh.indices) {
-      indexBuffer = this.device.createBuffer({
-        size: mesh.indices.byteLength,
-        usage: GPUBufferUsage.INDEX | GPUBufferUsage.COPY_DST,
-        mappedAtCreation: true,
-      });
-      new Uint16Array(indexBuffer.getMappedRange()).set(mesh.indices);
-      indexBuffer.unmap();
-      indexCount = mesh.indices.length;
+    const maxBinding = this.device.limits.maxStorageBufferBindingSize;
+    if (mesh.packed.byteLength > maxBinding) {
+      throw new Error(`${mesh.count} splats exceed maxStorageBufferBindingSize (${maxBinding} bytes)`);
     }
 
-    const vertexCount = mesh.vertices.length / 3;
-
-    const instanceBuffer = this.device.createBuffer({
-      size: mesh.instanceData.byteLength,
-      usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST,
+    const splatBuffer = this.device.createBuffer({
+      size: mesh.packed.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
       mappedAtCreation: true,
     });
-    new Float32Array(instanceBuffer.getMappedRange()).set(mesh.instanceData);
-    instanceBuffer.unmap();
+    new Uint32Array(splatBuffer.getMappedRange()).set(mesh.packed);
+    splatBuffer.unmap();
+
+    const orderBuffer = this.device.createBuffer({
+      size: mesh.order.byteLength,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
 
     const uniformBuffer = this.device.createBuffer({
-      size: 144, // 2 mat4x4 matrices (128) + vec2 viewport (8) + padding (8) = 144 bytes
+      size: this.splatUniforms.byteLength,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
 
-    const shaderResources = this.getOrCreateShaderResources(shader);
-    const bindGroupLayout = shaderResources.pipeline.getBindGroupLayout(0);
     const bindGroup = this.device.createBindGroup({
-      layout: bindGroupLayout,
+      layout: this.getOrCreateSplatPipeline().getBindGroupLayout(0),
       entries: [
-        {
-          binding: 0,
-          resource: {
-            buffer: uniformBuffer,
-          },
-        },
+        { binding: 0, resource: { buffer: uniformBuffer } },
+        { binding: 1, resource: { buffer: splatBuffer } },
+        { binding: 2, resource: { buffer: orderBuffer } },
       ],
     });
 
-    resources = {
-      vertexBuffer,
-      indexBuffer,
-      vertexCount,
-      indexCount,
-      instanceBuffer,
-      instanceCount: mesh.instanceCount,
-      uniformBuffer,
-      bindGroup,
-    };
-
-    this.instancedMeshResources.set(mesh, resources);
+    mesh.needsOrderUpload = true;
+    resources = { splatBuffer, orderBuffer, uniformBuffer, bindGroup };
+    this.splatResources.set(mesh, resources);
     return resources;
+  }
+
+  private renderSplats(mesh: SplatMesh, camera: Camera, renderPass: GPURenderPassEncoder): void {
+    if (mesh.count === 0) return;
+
+    mesh.sort(camera.position);
+
+    const pipeline = this.getOrCreateSplatPipeline();
+    const resources = this.getOrCreateSplatResources(mesh);
+
+    if (mesh.needsOrderUpload) {
+      this.device.queue.writeBuffer(resources.orderBuffer, 0, mesh.order);
+      mesh.needsOrderUpload = false;
+    }
+
+    const uniforms = this.splatUniforms;
+    uniforms.set(camera.viewMatrix, 0);
+    uniforms.set(camera.projectionMatrix, 16);
+    uniforms[32] = this.canvas.width;
+    uniforms[33] = this.canvas.height;
+    uniforms[34] = 1 / mesh.covScale;
+    this.device.queue.writeBuffer(resources.uniformBuffer, 0, uniforms);
+
+    renderPass.setPipeline(pipeline);
+    renderPass.setBindGroup(0, resources.bindGroup);
+    renderPass.draw(4, mesh.count);
   }
 
   render(scene: Scene, camera: Camera): void {
@@ -336,44 +346,7 @@ export class WebGPURenderer implements Renderer {
         continue;
       }
 
-      if (obj instanceof InstancedMesh) {
-        // todo: this needs to be exclusie only for splat meshes
-        // sort instances if camera moved
-        if (obj.shouldSort(camera.position)) {
-          obj.sortInstances(camera.position);
-        }
-
-        const shader = this.getOrCreateShaderResources(obj.material.shader);
-        const meshResources = this.getOrCreateInstancedMeshResources(obj, obj.material.shader);
-
-        // update instance buffer with latest data (always update for now, or only when needsBufferUpdate is true)
-        if (obj.needsBufferUpdate) {
-          this.device.queue.writeBuffer(meshResources.instanceBuffer, 0, obj.instanceData.buffer, obj.instanceData.byteOffset, obj.instanceData.byteLength);
-          obj.needsBufferUpdate = false;
-        }
-
-        // uniform data: view matrix (16), projection matrix (16), viewport (2) = 34 floats
-        const uniformData = new Float32Array(36); // 36 for alignment (multiple of 4)
-        uniformData.set(camera.viewMatrix, 0);
-        uniformData.set(camera.projectionMatrix, 16);
-        uniformData[32] = this.canvas.width;
-        uniformData[33] = this.canvas.height;
-
-        this.device.queue.writeBuffer(meshResources.uniformBuffer, 0, uniformData);
-
-        renderPass.setPipeline(shader.pipeline);
-        renderPass.setBindGroup(0, meshResources.bindGroup);
-        renderPass.setVertexBuffer(0, meshResources.vertexBuffer);
-        renderPass.setVertexBuffer(1, meshResources.instanceBuffer);
-
-        if (meshResources.indexBuffer && meshResources.indexCount) {
-          renderPass.setIndexBuffer(meshResources.indexBuffer, 'uint16');
-          renderPass.drawIndexed(meshResources.indexCount, meshResources.instanceCount);
-        } else {
-          renderPass.draw(meshResources.vertexCount, meshResources.instanceCount);
-        }
-
-      } else if (obj instanceof Mesh) {
+      if (obj instanceof Mesh) {
         const shader = this.getOrCreateShaderResources(obj.material.shader);
         const meshResources = this.getOrCreateMeshResources(obj, obj.material.shader);
 
@@ -404,6 +377,11 @@ export class WebGPURenderer implements Renderer {
         }
       }
     }
+
+    // splats last, blended over the opaque meshes
+    scene.traverse((obj) => {
+      if (obj instanceof SplatMesh) this.renderSplats(obj, camera, renderPass);
+    });
 
     renderPass.end();
     this.device.queue.submit([commandEncoder.finish()]);
